@@ -34,7 +34,7 @@ import org.apache.commons.compress.archivers.ArchiveEntry;
  */
 public final class ChangeSet {
 
-    private final Set changes = new LinkedHashSet();
+    private final Set<Change> changes = new LinkedHashSet<Change>();
 
     /**
      * Deletes the file with the filename from the archive. 
@@ -55,7 +55,7 @@ public final class ChangeSet {
     public void deleteDir(final String dirName) {
         addDeletion(new Change(dirName, Change.TYPE_DELETE_DIR));
     }
-    
+
     /**
      * Adds a new archive entry to the archive.
      * 
@@ -67,7 +67,7 @@ public final class ChangeSet {
     public void add(final ArchiveEntry pEntry, final InputStream pInput) {
         this.add(pEntry, pInput, true);
     }
-    
+
     /**
      * Adds a new archive entry to the archive.
      * If replace is set to true, this change will replace all other additions
@@ -78,7 +78,7 @@ public final class ChangeSet {
      * @param pInput
      *            the datastream to add
      * @param replace
-     *            indicates the this change should replace existing entries            
+     *            indicates the this change should replace existing entries
      */
     public void add(final ArchiveEntry pEntry, final InputStream pInput, final boolean replace) {
         addAddition(new Change(pEntry, pInput, replace));
@@ -91,14 +91,14 @@ public final class ChangeSet {
      *            the change which should result in an addition
      */
     private void addAddition(Change pChange) {
-        if (Change.TYPE_ADD != pChange.type() ||    
+        if (Change.TYPE_ADD != pChange.type() ||
             pChange.getInput() == null) {
             return;
         }
 
         if (!changes.isEmpty()) {
-            for (Iterator it = changes.iterator(); it.hasNext();) {
-                Change change = (Change) it.next();
+            for (Iterator<Change> it = changes.iterator(); it.hasNext();) {
+                Change change = it.next();
                 if (change.type() == Change.TYPE_ADD
                         && change.getEntry() != null) {
                     ArchiveEntry entry = change.getEntry();
@@ -118,7 +118,7 @@ public final class ChangeSet {
         }
         changes.add(pChange);
     }
-    
+
     /**
      * Adds an delete change.
      * 
@@ -127,18 +127,22 @@ public final class ChangeSet {
      */
     private void addDeletion(Change pChange) {
         if ((Change.TYPE_DELETE != pChange.type() &&
-            Change.TYPE_DELETE_DIR != pChange.type()) ||    
+            Change.TYPE_DELETE_DIR != pChange.type()) ||
             pChange.targetFile() == null) {
             return;
         }
         String source = pChange.targetFile();
 
-        if (!changes.isEmpty()) {
-            for (Iterator it = changes.iterator(); it.hasNext();) {
-                Change change = (Change) it.next();
+        if (source != null && !changes.isEmpty()) {
+            for (Iterator<Change> it = changes.iterator(); it.hasNext();) {
+                Change change = it.next();
                 if (change.type() == Change.TYPE_ADD
                         && change.getEntry() != null) {
                     String target = change.getEntry().getName();
+
+                    if (target == null) {
+                        continue;
+                    }
 
                     if (Change.TYPE_DELETE == pChange.type() && source.equals(target)) {
                         it.remove();
@@ -157,7 +161,7 @@ public final class ChangeSet {
      * are not reflected on this ChangeSet and vice versa.
      * @return the changes as a copy
      */
-    Set getChanges() {
-        return new LinkedHashSet(changes);
+    Set<Change> getChanges() {
+        return new LinkedHashSet<Change>(changes);
     }
 }

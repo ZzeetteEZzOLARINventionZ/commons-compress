@@ -18,6 +18,8 @@
  */
 package org.apache.commons.compress.compressors;
 
+import static org.junit.Assert.*;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -25,10 +27,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 import org.apache.commons.compress.AbstractTestCase;
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.apache.commons.compress.utils.IOUtils;
+import org.junit.Test;
 
 public final class BZip2TestCase extends AbstractTestCase {
 
+    @Test
     public void testBzipCreation()  throws Exception {
         File output = null;
         final File input = getFile("test.txt");
@@ -57,6 +62,7 @@ public final class BZip2TestCase extends AbstractTestCase {
         assertEquals(input.length(),decompressed.length());
     }
 
+    @Test
     public void testBzip2Unarchive() throws Exception {
         final File input = getFile("bla.txt.bz2");
         final File output = new File(dir, "bla.txt");
@@ -66,6 +72,65 @@ public final class BZip2TestCase extends AbstractTestCase {
         IOUtils.copy(in, os);
         is.close();
         os.close();
+    }
+
+    @Test
+    public void testConcatenatedStreamsReadFirstOnly() throws Exception {
+        final File input = getFile("multiple.bz2");
+        final InputStream is = new FileInputStream(input);
+        try {
+            final CompressorInputStream in = new CompressorStreamFactory()
+                .createCompressorInputStream("bzip2", is);
+            try {
+                assertEquals('a', in.read());
+                assertEquals(-1, in.read());
+            } finally {
+                in.close();
+            }
+        } finally {
+            is.close();
+        }
+    }
+
+    @Test
+    public void testConcatenatedStreamsReadFully() throws Exception {
+        final File input = getFile("multiple.bz2");
+        final InputStream is = new FileInputStream(input);
+        try {
+            final CompressorInputStream in =
+                new BZip2CompressorInputStream(is, true);
+            try {
+                assertEquals('a', in.read());
+                assertEquals('b', in.read());
+                assertEquals(0, in.available());
+                assertEquals(-1, in.read());
+            } finally {
+                in.close();
+            }
+        } finally {
+            is.close();
+        }
+    }
+
+    @Test
+    public void testCOMPRESS131() throws Exception {
+        final File input = getFile("COMPRESS-131.bz2");
+        final InputStream is = new FileInputStream(input);
+        try {
+            final CompressorInputStream in =
+                new BZip2CompressorInputStream(is, true);
+            try {
+                int l = 0;
+                while(in.read() != -1) {
+                    l++;
+                }
+                assertEquals(539, l);
+            } finally {
+                in.close();
+            }
+        } finally {
+            is.close();
+        }
     }
 
 }

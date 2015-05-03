@@ -18,12 +18,14 @@
  */
 package org.apache.commons.compress.archivers.ar;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ArchiveInputStream;
 import org.apache.commons.compress.utils.ArchiveUtils;
+import org.apache.commons.compress.utils.IOUtils;
 
 /**
  * Implements the "ar" archive format as an input stream.
@@ -52,6 +54,13 @@ public class ArArchiveInputStream extends ArchiveInputStream {
      */
     private long entryOffset = -1;
 
+    // cached buffers - must only be used locally in the class (COMPRESS-172 - reduce garbage collection)
+    private final byte[] NAME_BUF = new byte[16];
+    private final byte[] LAST_MODIFIED_BUF = new byte[12];
+    private final byte[] ID_BUF = new byte[6];
+    private final byte[] FILE_MODE_BUF = new byte[8];
+    private final byte[] LENGTH_BUF = new byte[10];
+
     /**
      * Constructs an Ar input stream with the referenced stream
      * 
@@ -73,21 +82,14 @@ public class ArArchiveInputStream extends ArchiveInputStream {
     public ArArchiveEntry getNextArEntry() throws IOException {
         if (currentEntry != null) {
             final long entryEnd = entryOffset + currentEntry.getLength();
-            while (offset < entryEnd) {
-                int x = read();
-                if (x == -1) {
-                    // hit EOF before previous entry was complete
-                    // TODO: throw an exception instead?
-                    return null;
-                }
-            }
+            IOUtils.skip(this, entryEnd - offset);
             currentEntry = null;
         }
 
         if (offset == 0) {
             final byte[] expected = ArchiveUtils.toAsciiBytes(ArArchiveEntry.HEADER);
             final byte[] realized = new byte[expected.length];
-            final int read = read(realized);
+            final int read = IOUtils.readFully(this, realized);
             if (read != expected.length) {
                 throw new IOException("failed to read header. Occured at byte: " + getBytesRead());
             }
@@ -107,24 +109,18 @@ public class ArArchiveInputStream extends ArchiveInputStream {
             return null;
         }
 
-        final byte[] name = new byte[16];
-        final byte[] lastmodified = new byte[12];
-        final byte[] userid = new byte[6];
-        final byte[] groupid = new byte[6];
-        final byte[] filemode = new byte[8];
-        final byte[] length = new byte[10];
-
-        read(name);
-        read(lastmodified);
-        read(userid);
-        read(groupid);
-        read(filemode);
-        read(length);
+        IOUtils.readFully(this, NAME_BUF);
+        IOUtils.readFully(this, LAST_MODIFIED_BUF);
+        IOUtils.readFully(this, ID_BUF);
+        int userId = asInt(ID_BUF, true);
+        IOUtils.readFully(this, ID_BUF);
+        IOUtils.readFully(this, FILE_MODE_BUF);
+        IOUtils.readFully(this, LENGTH_BUF);
 
         {
             final byte[] expected = ArchiveUtils.toAsciiBytes(ArArchiveEntry.TRAILER);
             final byte[] realized = new byte[expected.length];
-            final int read = read(realized);
+            final int read = IOUtils.readFully(this, realized);
             if (read != expected.length) {
                 throw new IOException("failed to read entry trailer. Occured at byte: " + getBytesRead());
             }
@@ -137,31 +133,35 @@ public class ArArchiveInputStream extends ArchiveInputStream {
 
         entryOffset = offset;
 
-//        GNU ar stores multiple extended filenames in the data section of a file with the name "//", this record is referred to by future headers. A header references an extended filename by storing a "/" followed by a decimal offset to the start of the filename in the extended filename data section. The format of this "//" file itself is simply a list of the long filenames, each separated by one or more LF characters. Note that the decimal offsets are number of characters, not line or string number within the "//" file.
-//
 //        GNU ar uses a '/' to mark the end of the filename; this allows for the use of spaces without the use of an extended filename.
 
         // entry name is stored as ASCII string
-        String temp = ArchiveUtils.toAsciiString(name).trim();
-
-        if (temp.equals("//")){ // GNU extended filenames entry
-            int bufflen = asInt(length); // Assume length will fit in an int
-            namebuffer = new byte[bufflen];
-            int read = read(namebuffer, 0, bufflen);
-            if (read != bufflen){
-                throw new IOException("Failed to read complete // record: expected="+bufflen+" read="+read);
-            }
-            currentEntry = new ArArchiveEntry(temp, bufflen);
+        String temp = ArchiveUtils.toAsciiString(NAME_BUF).trim();
+        if (isGNUStringTable(temp)) { // GNU extended filenames entry
+            currentEntry = readGNUStringTable(LENGTH_BUF);
             return getNextArEntry();
-        } else if (temp.endsWith("/")) { // GNU terminator
-            temp = temp.substring(0, temp.length() - 1);
-        } else if (temp.matches("^/\\d+")) {// GNU long filename ref.
-            int offset = Integer.parseInt(temp.substring(1));// get the offset
-            temp = getExtendedName(offset); // convert to the long name
         }
-        currentEntry = new ArArchiveEntry(temp, asLong(length), asInt(userid, true),
-                                          asInt(groupid, true), asInt(filemode, 8),
-                                          asLong(lastmodified));
+
+        long len = asLong(LENGTH_BUF);
+        if (temp.endsWith("/")) { // GNU terminator
+            temp = temp.substring(0, temp.length() - 1);
+        } else if (isGNULongName(temp)) {
+            int off = Integer.parseInt(temp.substring(1));// get the offset
+            temp = getExtendedName(off); // convert to the long name
+        } else if (isBSDLongName(temp)) {
+            temp = getBSDLongName(temp);
+            // entry length contained the length of the file name in
+            // addition to the real length of the entry.
+            // assume file name was ASCII, there is no "standard" otherwise
+            int nameLen = temp.length();
+            len -= nameLen;
+            entryOffset += nameLen;
+        }
+
+        currentEntry = new ArArchiveEntry(temp, len, userId,
+                                          asInt(ID_BUF, true),
+                                          asInt(FILE_MODE_BUF, 8),
+                                          asLong(LAST_MODIFIED_BUF));
         return currentEntry;
     }
 
@@ -187,7 +187,7 @@ public class ArArchiveInputStream extends ArchiveInputStream {
         throw new IOException("Failed to read entry: "+offset);
     }
     private long asLong(byte[] input) {
-        return Long.parseLong(new String(input).trim());
+        return Long.parseLong(ArchiveUtils.toAsciiString(input).trim());
     }
 
     private int asInt(byte[] input) {
@@ -203,7 +203,7 @@ public class ArArchiveInputStream extends ArchiveInputStream {
     }
 
     private int asInt(byte[] input, int base, boolean treatBlankAsZero) {
-        String string = new String(input).trim();
+        String string = ArchiveUtils.toAsciiString(input).trim();
         if (string.length() == 0 && treatBlankAsZero) {
             return 0;
         }
@@ -216,6 +216,7 @@ public class ArArchiveInputStream extends ArchiveInputStream {
      * @see
      * org.apache.commons.compress.archivers.ArchiveInputStream#getNextEntry()
      */
+    @Override
     public ArchiveEntry getNextEntry() throws IOException {
         return getNextArEntry();
     }
@@ -225,6 +226,7 @@ public class ArArchiveInputStream extends ArchiveInputStream {
      * 
      * @see java.io.InputStream#close()
      */
+    @Override
     public void close() throws IOException {
         if (!closed) {
             closed = true;
@@ -238,6 +240,7 @@ public class ArArchiveInputStream extends ArchiveInputStream {
      * 
      * @see java.io.InputStream#read(byte[], int, int)
      */
+    @Override
     public int read(byte[] b, final int off, final int len) throws IOException {
         int toRead = len;
         if (currentEntry != null) {
@@ -250,12 +253,12 @@ public class ArArchiveInputStream extends ArchiveInputStream {
         }
         final int ret = this.input.read(b, off, toRead);
         count(ret);
-        offset += (ret > 0 ? ret : 0);
+        offset += ret > 0 ? ret : 0;
         return ret;
     }
 
     /**
-     * Checks if the signature matches ASCII "!<arch>" followed by a single LF
+     * Checks if the signature matches ASCII "!&lt;arch&gt;" followed by a single LF
      * control character
      * 
      * @param signature
@@ -298,4 +301,106 @@ public class ArArchiveInputStream extends ArchiveInputStream {
         return true;
     }
 
+    static final String BSD_LONGNAME_PREFIX = "#1/";
+    private static final int BSD_LONGNAME_PREFIX_LEN =
+        BSD_LONGNAME_PREFIX.length();
+    private static final String BSD_LONGNAME_PATTERN =
+        "^" + BSD_LONGNAME_PREFIX + "\\d+";
+
+    /**
+     * Does the name look like it is a long name (or a name containing
+     * spaces) as encoded by BSD ar?
+     *
+     * <p>From the FreeBSD ar(5) man page:</p>
+     * <pre>
+     * BSD   In the BSD variant, names that are shorter than 16
+     *       characters and without embedded spaces are stored
+     *       directly in this field.  If a name has an embedded
+     *       space, or if it is longer than 16 characters, then
+     *       the string "#1/" followed by the decimal represen-
+     *       tation of the length of the file name is placed in
+     *       this field. The actual file name is stored immedi-
+     *       ately after the archive header.  The content of the
+     *       archive member follows the file name.  The ar_size
+     *       field of the header (see below) will then hold the
+     *       sum of the size of the file name and the size of
+     *       the member.
+     * </pre>
+     *
+     * @since 1.3
+     */
+    private static boolean isBSDLongName(String name) {
+        return name != null && name.matches(BSD_LONGNAME_PATTERN);
+    }
+
+    /**
+     * Reads the real name from the current stream assuming the very
+     * first bytes to be read are the real file name.
+     *
+     * @see #isBSDLongName
+     *
+     * @since 1.3
+     */
+    private String getBSDLongName(String bsdLongName) throws IOException {
+        int nameLen =
+            Integer.parseInt(bsdLongName.substring(BSD_LONGNAME_PREFIX_LEN));
+        byte[] name = new byte[nameLen];
+        int read = IOUtils.readFully(input, name);
+        count(read);
+        if (read != nameLen) {
+            throw new EOFException();
+        }
+        return ArchiveUtils.toAsciiString(name);
+    }
+
+    private static final String GNU_STRING_TABLE_NAME = "//";
+
+    /**
+     * Is this the name of the "Archive String Table" as used by
+     * SVR4/GNU to store long file names?
+     *
+     * <p>GNU ar stores multiple extended filenames in the data section
+     * of a file with the name "//", this record is referred to by
+     * future headers.</p>
+     *
+     * <p>A header references an extended filename by storing a "/"
+     * followed by a decimal offset to the start of the filename in
+     * the extended filename data section.</p>
+     * 
+     * <p>The format of the "//" file itself is simply a list of the
+     * long filenames, each separated by one or more LF
+     * characters. Note that the decimal offsets are number of
+     * characters, not line or string number within the "//" file.</p>
+     */
+    private static boolean isGNUStringTable(String name) {
+        return GNU_STRING_TABLE_NAME.equals(name);
+    }
+
+    /**
+     * Reads the GNU archive String Table.
+     *
+     * @see #isGNUStringTable
+     */
+    private ArArchiveEntry readGNUStringTable(byte[] length) throws IOException {
+        int bufflen = asInt(length); // Assume length will fit in an int
+        namebuffer = new byte[bufflen];
+        int read = IOUtils.readFully(this, namebuffer, 0, bufflen);
+        if (read != bufflen){
+            throw new IOException("Failed to read complete // record: expected="
+                                  + bufflen + " read=" + read);
+        }
+        return new ArArchiveEntry(GNU_STRING_TABLE_NAME, bufflen);
+    }
+
+    private static final String GNU_LONGNAME_PATTERN = "^/\\d+";
+
+    /**
+     * Does the name look like it is a long name (or a name containing
+     * spaces) as encoded by SVR4/GNU ar?
+     *
+     * @see #isGNUStringTable
+     */
+    private boolean isGNULongName(String name) {
+        return name != null && name.matches(GNU_LONGNAME_PATTERN);
+    }
 }

@@ -17,6 +17,8 @@
  */
 package org.apache.commons.compress.archivers.zip;
 
+import java.io.Serializable;
+
 import static org.apache.commons.compress.archivers.zip.ZipConstants.BYTE_MASK;
 
 /**
@@ -24,7 +26,9 @@ import static org.apache.commons.compress.archivers.zip.ZipConstants.BYTE_MASK;
  * rules for the big endian byte order of ZIP files.
  * @Immutable
  */
-public final class ZipShort implements Cloneable {
+public final class ZipShort implements Cloneable, Serializable {
+    private static final long serialVersionUID = 1L;
+
     private static final int BYTE_1_MASK = 0xFF00;
     private static final int BYTE_1_SHIFT = 8;
 
@@ -81,9 +85,21 @@ public final class ZipShort implements Cloneable {
      */
     public static byte[] getBytes(int value) {
         byte[] result = new byte[2];
-        result[0] = (byte) (value & BYTE_MASK);
-        result[1] = (byte) ((value & BYTE_1_MASK) >> BYTE_1_SHIFT);
+        putShort(value, result, 0);
         return result;
+    }
+
+    /**
+     * put the value as two bytes in big endian byte order.
+     * @param value the Java int to convert to bytes
+     * @param buf the output buffer
+     * @param  offset
+     *         The offset within the output buffer of the first byte to be written.
+     *         must be non-negative and no larger than <tt>buf.length-2</tt>
+     */
+    public static void putShort(int value, byte[] buf, int offset) {
+        buf[offset] = (byte) (value & BYTE_MASK);
+        buf[offset+1] = (byte) ((value & BYTE_1_MASK) >> BYTE_1_SHIFT);
     }
 
     /**

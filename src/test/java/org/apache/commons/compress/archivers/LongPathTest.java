@@ -18,81 +18,96 @@
 
 package org.apache.commons.compress.archivers;
 
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileReader;
-import java.io.IOException;
+import java.io.FilenameFilter;
 import java.util.ArrayList;
+import java.util.Collection;
 
 import junit.framework.AssertionFailedError;
-import junit.framework.Test;
-import junit.framework.TestSuite;
 
 import org.apache.commons.compress.AbstractTestCase;
+import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ar.ArArchiveInputStream;
 import org.apache.commons.compress.archivers.cpio.CpioArchiveInputStream;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 /**
  * Test that can read various tar file examples.
  * 
- * The class uses nested suites in order to be able to name the test after the file name,
- * as JUnit does not allow one to change the display name of a test.
- */
+  * Files must be in resources/longpath, and there must be a file.txt containing
+ * the list of files in the archives.
+*/
+@RunWith(Parameterized.class)
 public class LongPathTest extends AbstractTestCase {
-    
-    private static final ClassLoader classLoader = LongPathTest.class.getClassLoader();
+
+    private static final ClassLoader CLASSLOADER = LongPathTest.class.getClassLoader();
+    private static final File ARCDIR = new File(CLASSLOADER.getResource("longpath").getFile());
+    private static final ArrayList<String> FILELIST = new ArrayList<String>();
 
     private File file;
 
-    private static final ArrayList fileList = new ArrayList();
+    public LongPathTest(String file){
+        this.file = new File(ARCDIR, file);
+    }
 
-    private final ArchiveStreamFactory factory = new ArchiveStreamFactory();
-    
-    public LongPathTest(String name) {
-        super(name);
-    }
-    
-    private LongPathTest(String name, File file){
-        super(name);
-        this.file = file;
-    }
-    
-    public static TestSuite suite() throws IOException{
-        TestSuite suite = new TestSuite("LongPathTests");
-        File arcdir =new File(classLoader.getResource("longpath").getFile());
-        assertTrue(arcdir.exists());
-        File listing= new File(arcdir,"files.txt");
-        assertTrue("File listing is readable",listing.canRead());
+    @BeforeClass
+    public static void setUpFileList() throws Exception {
+        assertTrue(ARCDIR.exists());
+        File listing= new File(ARCDIR,"files.txt");
+        assertTrue("files.txt is readable",listing.canRead());
         BufferedReader br = new BufferedReader(new FileReader(listing));
         String line;
         while ((line=br.readLine())!=null){
-            if (line.startsWith("#")){
-                continue;
+            if (!line.startsWith("#")){
+                FILELIST.add(line);
             }
-            fileList.add(line);
         }
         br.close();
-        File[]files=arcdir.listFiles();
-        for (int i=0; i<files.length; i++){
-            final File file = files[i];
-            if (file.getName().endsWith(".txt")){
-                continue;
-            }
-            // Appears to be the only way to give the test a variable name
-            TestSuite namedSuite = new TestSuite(file.getName());
-            Test test = new LongPathTest("testArchive", file);
-            namedSuite.addTest(test);
-            suite.addTest(namedSuite);
-        }        
-        return suite;
     }
-    
+
+    @Parameters(name = "file={0}")
+    public static Collection<Object[]> data() {
+        Collection<Object[]> params = new ArrayList<Object[]>();
+        for (String f : ARCDIR.list(new FilenameFilter() {
+            public boolean accept(File dir, String name) {
+                return !name.endsWith(".txt");
+            }
+        })) 
+        {
+            params.add(new Object[] { f });
+        }
+      return params;
+    }
+
+    @Override
+    protected String getExpectedString(ArchiveEntry entry) {
+        if (entry instanceof TarArchiveEntry) {
+            TarArchiveEntry tarEntry = (TarArchiveEntry) entry;
+            if (tarEntry.isSymbolicLink()) {
+                return tarEntry.getName() + " -> " + tarEntry.getLinkName();
+            }
+        }
+        return entry.getName();
+    }
+
+    @Test
     public void testArchive() throws Exception {
-        ArrayList expected=(ArrayList) fileList.clone();
+        @SuppressWarnings("unchecked") // fileList is of correct type
+        ArrayList<String> expected = (ArrayList<String>) FILELIST.clone();
         String name = file.getName();
         if ("minotaur.jar".equals(name) || "minotaur-0.jar".equals(name)){
             expected.add("META-INF/");
@@ -108,7 +123,7 @@ public class LongPathTest extends AbstractTestCase {
             assertTrue(ais instanceof CpioArchiveInputStream);
             // Hack: cpio does not add trailing "/" to directory names
             for(int i=0; i < expected.size(); i++){
-                String ent = (String) expected.get(i);
+                String ent = expected.get(i);
                 if (ent.endsWith("/")){
                     expected.set(i, ent.substring(0, ent.length()-1));
                 }
@@ -117,12 +132,11 @@ public class LongPathTest extends AbstractTestCase {
             assertTrue(ais instanceof ArArchiveInputStream);
             // CPIO does not store directories or directory names
             expected.clear();
-            for(int i=0; i < fileList.size(); i++){
-                String ent = (String) fileList.get(i);
-                if (!ent.endsWith("/")){// not a directory
+            for (String ent : FILELIST) {
+                if (!ent.endsWith("/")) {// not a directory
                     final int lastSlash = ent.lastIndexOf('/');
                     if (lastSlash >= 0) { // extract path name
-                        expected.add(ent.substring(lastSlash+1, ent.length()));                        
+                        expected.add(ent.substring(lastSlash + 1, ent.length()));
                     } else {
                         expected.add(ent);
                     }
@@ -135,6 +149,8 @@ public class LongPathTest extends AbstractTestCase {
             checkArchiveContent(ais, expected);
         } catch (AssertionFailedError e) {
             fail("Error processing "+file.getName()+" "+e);
+        } finally {
+            ais.close();
         }
     }
 }

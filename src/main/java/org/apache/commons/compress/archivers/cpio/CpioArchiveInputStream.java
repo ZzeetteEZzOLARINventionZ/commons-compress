@@ -24,40 +24,44 @@ import java.io.InputStream;
 
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ArchiveInputStream;
+import org.apache.commons.compress.archivers.zip.ZipEncoding;
+import org.apache.commons.compress.archivers.zip.ZipEncodingHelper;
 import org.apache.commons.compress.utils.ArchiveUtils;
+import org.apache.commons.compress.utils.CharsetNames;
+import org.apache.commons.compress.utils.IOUtils;
 
 /**
  * CPIOArchiveInputStream is a stream for reading cpio streams. All formats of
  * cpio are supported (old ascii, old binary, new portable format and the new
  * portable format with crc).
- * <p/>
- * <p/>
+ *
+ * <p>
  * The stream can be read by extracting a cpio entry (containing all
  * informations about a entry) and afterwards reading from the stream the file
  * specified by the entry.
- * <p/>
- * <code><pre>
+ * </p>
+ * <pre>
  * CPIOArchiveInputStream cpioIn = new CPIOArchiveInputStream(
  *         new FileInputStream(new File(&quot;test.cpio&quot;)));
  * CPIOArchiveEntry cpioEntry;
- * <p/>
+ *
  * while ((cpioEntry = cpioIn.getNextEntry()) != null) {
  *     System.out.println(cpioEntry.getName());
  *     int tmp;
- *     StringBuffer buf = new StringBuffer();
+ *     StringBuilder buf = new StringBuilder();
  *     while ((tmp = cpIn.read()) != -1) {
  *         buf.append((char) tmp);
  *     }
  *     System.out.println(buf.toString());
  * }
  * cpioIn.close();
- * </pre></code>
- * <p/>
+ * </pre>
+ * <p>
  * Note: This implementation should be compatible to cpio 2.5
  * 
- * This class uses mutable fields and is not considered to be threadsafe.
+ * <p>This class uses mutable fields and is not considered to be threadsafe.
  * 
- * Based on code from the jRPM project (jrpm.sourceforge.net)
+ * <p>Based on code from the jRPM project (jrpm.sourceforge.net)
  */
 
 public class CpioArchiveInputStream extends ArchiveInputStream implements
@@ -77,20 +81,86 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
 
     private final InputStream in;
 
+    // cached buffers - must only be used locally in the class (COMPRESS-172 - reduce garbage collection)
+    private final byte[] TWO_BYTES_BUF = new byte[2];
+    private final byte[] FOUR_BYTES_BUF = new byte[4];
+    private final byte[] SIX_BYTES_BUF = new byte[6];
+
+    private final int blockSize;
+
     /**
-     * Construct the cpio input stream
+     * The encoding to use for filenames and labels.
+     */
+    private final ZipEncoding zipEncoding;
+
+    // the provided encoding (for unit tests)
+    final String encoding;
+
+    /**
+     * Construct the cpio input stream with a blocksize of {@link
+     * CpioConstants#BLOCK_SIZE BLOCK_SIZE} and expecting ASCII file
+     * names.
      * 
      * @param in
      *            The cpio stream
      */
     public CpioArchiveInputStream(final InputStream in) {
+        this(in, BLOCK_SIZE, CharsetNames.US_ASCII);
+    }
+
+    /**
+     * Construct the cpio input stream with a blocksize of {@link
+     * CpioConstants#BLOCK_SIZE BLOCK_SIZE}.
+     * 
+     * @param in
+     *            The cpio stream
+     * @param encoding
+     *            The encoding of file names to expect - use null for
+     *            the platform's default.
+     * @since 1.6
+     */
+    public CpioArchiveInputStream(final InputStream in, String encoding) {
+        this(in, BLOCK_SIZE, encoding);
+    }
+
+    /**
+     * Construct the cpio input stream with a blocksize of {@link
+     * CpioConstants#BLOCK_SIZE BLOCK_SIZE} expecting ASCII file
+     * names.
+     * 
+     * @param in
+     *            The cpio stream
+     * @param blockSize
+     *            The block size of the archive.
+     * @since 1.5
+     */
+    public CpioArchiveInputStream(final InputStream in, int blockSize) {
+        this(in, blockSize, CharsetNames.US_ASCII);
+    }
+
+    /**
+     * Construct the cpio input stream with a blocksize of {@link CpioConstants#BLOCK_SIZE BLOCK_SIZE}.
+     * 
+     * @param in
+     *            The cpio stream
+     * @param blockSize
+     *            The block size of the archive.
+     * @param encoding
+     *            The encoding of file names to expect - use null for
+     *            the platform's default.
+     * @since 1.6
+     */
+    public CpioArchiveInputStream(final InputStream in, int blockSize, String encoding) {
         this.in = in;
+        this.blockSize = blockSize;
+        this.encoding = encoding;
+        this.zipEncoding = ZipEncodingHelper.getZipEncoding(encoding);
     }
 
     /**
      * Returns 0 after EOF has reached for the current entry data, otherwise
      * always return 1.
-     * <p/>
+     * <p>
      * Programs should not count on this method to return the actual number of
      * bytes that could be read without blocking.
      * 
@@ -99,6 +169,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
      *             if an I/O error has occurred or if a CPIO file error has
      *             occurred
      */
+    @Override
     public int available() throws IOException {
         ensureOpen();
         if (this.entryEOF) {
@@ -113,6 +184,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
      * @throws IOException
      *             if an I/O error has occurred
      */
+    @Override
     public void close() throws IOException {
         if (!this.closed) {
             in.close();
@@ -129,12 +201,11 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
      *             occurred
      */
     private void closeEntry() throws IOException {
-        ensureOpen();
-        while (read(this.tmpbuf, 0, this.tmpbuf.length) != -1) { // NOPMD
+        // the skip implementation of this class will not skip more
+        // than Integer.MAX_VALUE bytes
+        while (skip((long) Integer.MAX_VALUE) == Integer.MAX_VALUE) { // NOPMD
             // do nothing
         }
-
-        this.entryEOF = true;
     }
 
     /**
@@ -163,20 +234,18 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         if (this.entry != null) {
             closeEntry();
         }
-        byte magic[] = new byte[2];
-        readFully(magic, 0, magic.length);
-        if (CpioUtil.byteArray2long(magic, false) == MAGIC_OLD_BINARY) {
+        readFully(TWO_BYTES_BUF, 0, TWO_BYTES_BUF.length);
+        if (CpioUtil.byteArray2long(TWO_BYTES_BUF, false) == MAGIC_OLD_BINARY) {
             this.entry = readOldBinaryEntry(false);
-        } else if (CpioUtil.byteArray2long(magic, true) == MAGIC_OLD_BINARY) {
+        } else if (CpioUtil.byteArray2long(TWO_BYTES_BUF, true)
+                   == MAGIC_OLD_BINARY) {
             this.entry = readOldBinaryEntry(true);
         } else {
-            byte more_magic[] = new byte[4];
-            readFully(more_magic, 0, more_magic.length);
-            byte tmp[] = new byte[6];
-            System.arraycopy(magic, 0, tmp, 0, magic.length);
-            System.arraycopy(more_magic, 0, tmp, magic.length,
-                    more_magic.length);
-            String magicString = ArchiveUtils.toAsciiString(tmp);
+            System.arraycopy(TWO_BYTES_BUF, 0, SIX_BYTES_BUF, 0,
+                             TWO_BYTES_BUF.length);
+            readFully(SIX_BYTES_BUF, TWO_BYTES_BUF.length,
+                      FOUR_BYTES_BUF.length);
+            String magicString = ArchiveUtils.toAsciiString(SIX_BYTES_BUF);
             if (magicString.equals(MAGIC_NEW)) {
                 this.entry = readNewEntry(false);
             } else if (magicString.equals(MAGIC_NEW_CRC)) {
@@ -194,15 +263,16 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
 
         if (this.entry.getName().equals(CPIO_TRAILER)) {
             this.entryEOF = true;
+            skipRemainderOfLastBlock();
             return null;
         }
         return this.entry;
     }
 
     private void skip(int bytes) throws IOException{
-        final byte[] buff = new byte[4]; // Cannot be more than 3 bytes
+        // bytes cannot be more than 3 bytes
         if (bytes > 0) {
-            readFully(buff, 0, bytes);
+            readFully(FOUR_BYTES_BUF, 0, bytes);
         }
     }
 
@@ -222,6 +292,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
      *             if an I/O error has occurred or if a CPIO file error has
      *             occurred
      */
+    @Override
     public int read(final byte[] b, final int off, final int len)
             throws IOException {
         ensureOpen();
@@ -263,19 +334,12 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
 
     private final int readFully(final byte[] b, final int off, final int len)
             throws IOException {
-        if (len < 0) {
-            throw new IndexOutOfBoundsException();
+        int count = IOUtils.readFully(in, b, off, len);
+        count(count);
+        if (count < len) {
+            throw new EOFException();
         }
-        int n = 0;
-        while (n < len) {
-            int count = this.in.read(b, off + n, len - n);
-            count(count);
-            if (count < 0) {
-                throw new EOFException();
-            }
-            n += count;
-        }
-        return n;
+        return count;
     }
 
     private long readBinaryLong(final int length, final boolean swapHalfWord)
@@ -303,7 +367,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
 
         ret.setInode(readAsciiLong(8, 16));
         long mode = readAsciiLong(8, 16);
-        if (mode != 0){ // mode is initialised to 0
+        if (CpioUtil.fileType(mode) != 0){ // mode is initialised to 0
             ret.setMode(mode);
         }
         ret.setUID(readAsciiLong(8, 16));
@@ -319,7 +383,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         ret.setChksum(readAsciiLong(8, 16));
         String name = readCString((int) namesize);
         ret.setName(name);
-        if (mode == 0 && !name.equals(CPIO_TRAILER)){
+        if (CpioUtil.fileType(mode) == 0 && !name.equals(CPIO_TRAILER)){
             throw new IOException("Mode 0 only allowed in the trailer. Found entry name: "+name + " Occured at byte: " + getBytesRead());
         }
         skip(ret.getHeaderPadCount());
@@ -333,7 +397,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         ret.setDevice(readAsciiLong(6, 8));
         ret.setInode(readAsciiLong(6, 8));
         final long mode = readAsciiLong(6, 8);
-        if (mode != 0) {
+        if (CpioUtil.fileType(mode) != 0) {
             ret.setMode(mode);
         }
         ret.setUID(readAsciiLong(6, 8));
@@ -345,7 +409,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         ret.setSize(readAsciiLong(11, 8));
         final String name = readCString((int) namesize);
         ret.setName(name);
-        if (mode == 0 && !name.equals(CPIO_TRAILER)){
+        if (CpioUtil.fileType(mode) == 0 && !name.equals(CPIO_TRAILER)){
             throw new IOException("Mode 0 only allowed in the trailer. Found entry: "+ name + " Occured at byte: " + getBytesRead());
         }
 
@@ -359,8 +423,8 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         ret.setDevice(readBinaryLong(2, swapHalfWord));
         ret.setInode(readBinaryLong(2, swapHalfWord));
         final long mode = readBinaryLong(2, swapHalfWord);
-        if (mode != 0){
-            ret.setMode(mode);            
+        if (CpioUtil.fileType(mode) != 0){
+            ret.setMode(mode);
         }
         ret.setUID(readBinaryLong(2, swapHalfWord));
         ret.setGID(readBinaryLong(2, swapHalfWord));
@@ -371,7 +435,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         ret.setSize(readBinaryLong(4, swapHalfWord));
         final String name = readCString((int) namesize);
         ret.setName(name);
-        if (mode == 0 && !name.equals(CPIO_TRAILER)){
+        if (CpioUtil.fileType(mode) == 0 && !name.equals(CPIO_TRAILER)){
             throw new IOException("Mode 0 only allowed in the trailer. Found entry: "+name + "Occured at byte: " + getBytesRead());
         }
         skip(ret.getHeaderPadCount());
@@ -380,9 +444,11 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
     }
 
     private String readCString(final int length) throws IOException {
-        byte tmpBuffer[] = new byte[length];
+        // don't include trailing NUL in file name to decode
+        byte tmpBuffer[] = new byte[length - 1];
         readFully(tmpBuffer, 0, tmpBuffer.length);
-        return new String(tmpBuffer, 0, tmpBuffer.length - 1);
+        this.in.read();
+        return zipEncoding.decode(tmpBuffer);
     }
 
     /**
@@ -394,8 +460,9 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
      * @throws IOException
      *             if an I/O error has occurred
      * @throws IllegalArgumentException
-     *             if n < 0
+     *             if n &lt; 0
      */
+    @Override
     public long skip(final long n) throws IOException {
         if (n < 0) {
             throw new IllegalArgumentException("negative skip length");
@@ -419,16 +486,32 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         return total;
     }
 
-    /** {@inheritDoc} */
+    @Override
     public ArchiveEntry getNextEntry() throws IOException {
         return getNextCPIOEntry();
+    }
+
+    /**
+     * Skips the padding zeros written after the TRAILER!!! entry.
+     */
+    private void skipRemainderOfLastBlock() throws IOException {
+        long readFromLastBlock = getBytesRead() % blockSize;
+        long remainingBytes = readFromLastBlock == 0 ? 0
+            : blockSize - readFromLastBlock;
+        while (remainingBytes > 0) {
+            long skipped = skip(blockSize - readFromLastBlock);
+            if (skipped <= 0) {
+                break;
+            }
+            remainingBytes -= skipped;
+        }
     }
 
     /**
      * Checks if the signature matches one of the following magic values:
      * 
      * Strings:
-     *  
+     *
      * "070701" - MAGIC_NEW
      * "070702" - MAGIC_NEW_CRC
      * "070707" - MAGIC_OLD_ASCII
@@ -441,7 +524,7 @@ public class CpioArchiveInputStream extends ArchiveInputStream implements
         if (length < 6) {
             return false;
         }
-        
+
         // Check binary values
         if (signature[0] == 0x71 && (signature[1] & 0xFF) == 0xc7) {
             return true;

@@ -22,6 +22,8 @@ import java.io.UnsupportedEncodingException;
 import java.util.zip.CRC32;
 import java.util.zip.ZipException;
 
+import org.apache.commons.compress.utils.CharsetNames;
+
 /**
  * A common base class for Unicode extra information extra fields.
  * @NotThreadSafe
@@ -36,7 +38,7 @@ public abstract class AbstractUnicodeExtraField implements ZipExtraField {
 
     /**
      * Assemble as unicode extension from the name/comment and
-     * encoding of the orginal zip entry.
+     * encoding of the original zip entry.
      * 
      * @param text The file name or comment.
      * @param bytes The encoded of the filename or comment in the zip
@@ -52,7 +54,7 @@ public abstract class AbstractUnicodeExtraField implements ZipExtraField {
         nameCRC32 = crc32.getValue();
 
         try {
-            unicodeName = text.getBytes("UTF-8");
+            unicodeName = text.getBytes(CharsetNames.UTF_8);
         } catch (UnsupportedEncodingException e) {
             throw new RuntimeException("FATAL: UTF-8 encoding not supported.", e);
         }
@@ -60,7 +62,7 @@ public abstract class AbstractUnicodeExtraField implements ZipExtraField {
 
     /**
      * Assemble as unicode extension from the name/comment and
-     * encoding of the orginal zip entry.
+     * encoding of the original zip entry.
      * 
      * @param text The file name or comment.
      * @param bytes The encoded of the filename or comment in the zip
@@ -100,47 +102,58 @@ public abstract class AbstractUnicodeExtraField implements ZipExtraField {
     }
 
     /**
-     * @return The utf-8 encoded name.
+     * @return The UTF-8 encoded name.
      */
     public byte[] getUnicodeName() {
-        return unicodeName;
+        byte[] b = null;
+        if (unicodeName != null) {
+            b = new byte[unicodeName.length];
+            System.arraycopy(unicodeName, 0, b, 0, b.length);
+        }
+        return b;
     }
 
     /**
-     * @param unicodeName The utf-8 encoded name to set.
+     * @param unicodeName The UTF-8 encoded name to set.
      */
     public void setUnicodeName(byte[] unicodeName) {
-        this.unicodeName = unicodeName;
+        if (unicodeName != null) {
+            this.unicodeName = new byte[unicodeName.length];
+            System.arraycopy(unicodeName, 0, this.unicodeName, 0,
+                             unicodeName.length);
+        } else {
+            this.unicodeName = null;
+        }
         data = null;
     }
 
-    /** {@inheritDoc} */
     public byte[] getCentralDirectoryData() {
         if (data == null) {
             this.assembleData();
         }
-        return data;
+        byte[] b = null;
+        if (data != null) {
+            b = new byte[data.length];
+            System.arraycopy(data, 0, b, 0, b.length);
+        }
+        return b;
     }
 
-    /** {@inheritDoc} */
     public ZipShort getCentralDirectoryLength() {
         if (data == null) {
             assembleData();
         }
-        return new ZipShort(data.length);
+        return new ZipShort(data != null ? data.length : 0);
     }
 
-    /** {@inheritDoc} */
     public byte[] getLocalFileDataData() {
         return getCentralDirectoryData();
     }
 
-    /** {@inheritDoc} */
     public ZipShort getLocalFileDataLength() {
         return getCentralDirectoryLength();
     }
 
-    /** {@inheritDoc} */
     public void parseFromLocalFileData(byte[] buffer, int offset, int length)
         throws ZipException {
 

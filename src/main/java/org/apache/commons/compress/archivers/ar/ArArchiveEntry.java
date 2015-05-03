@@ -26,7 +26,7 @@ import org.apache.commons.compress.archivers.ArchiveEntry;
 /**
  * Represents an archive entry in the "ar" format.
  * 
- * Each AR archive starts with "!<arch>" followed by a LF. After these 8 bytes
+ * Each AR archive starts with "!&lt;arch&gt;" followed by a LF. After these 8 bytes
  * the archive entries are listed. The format of an entry header is as it follows:
  * 
  * <pre>
@@ -44,8 +44,8 @@ import org.apache.commons.compress.archivers.ArchiveEntry;
  * 
  * Due to the limitation of the file name length to 16 bytes GNU and
  * BSD has their own variants of this format. Currently Commons
- * Compress can read but not write the GNU variant and doesn't support
- * the BSD variant at all.
+ * Compress can read but not write the GNU variant.  It fully supports
+ * the BSD variant.
  * 
  * @see <a href="http://www.freebsd.org/cgi/man.cgi?query=ar&sektion=5">ar man page</a>
  *
@@ -115,12 +115,10 @@ public class ArArchiveEntry implements ArchiveEntry {
              0, 0, DEFAULT_MODE, inputFile.lastModified() / 1000);
     }
 
-    /** {@inheritDoc} */
     public long getSize() {
         return this.getLength();
     }
 
-    /** {@inheritDoc} */
     public String getName() {
         return name;
     }
@@ -144,7 +142,6 @@ public class ArArchiveEntry implements ArchiveEntry {
         return lastModified;
     }
 
-    /** {@inheritDoc} */
     public Date getLastModifiedDate() {
         return new Date(1000 * getLastModified());
     }
@@ -153,20 +150,19 @@ public class ArArchiveEntry implements ArchiveEntry {
         return length;
     }
 
-    /** {@inheritDoc} */
     public boolean isDirectory() {
         return false;
     }
 
-    /** {@inheritDoc} */
+    @Override
     public int hashCode() {
         final int prime = 31;
         int result = 1;
-        result = prime * result + ((name == null) ? 0 : name.hashCode());
+        result = prime * result + (name == null ? 0 : name.hashCode());
         return result;
     }
 
-    /** {@inheritDoc} */
+    @Override
     public boolean equals(Object obj) {
         if (this == obj) {
             return true;

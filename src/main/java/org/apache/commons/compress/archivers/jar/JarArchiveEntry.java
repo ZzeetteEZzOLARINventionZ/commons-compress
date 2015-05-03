@@ -24,17 +24,17 @@ import java.util.jar.JarEntry;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 
-import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 
 /**
  *
- * @NotThreadSafe
+ * @NotThreadSafe (parent is not thread-safe)
  */
-public class JarArchiveEntry extends ZipArchiveEntry implements ArchiveEntry {
+public class JarArchiveEntry extends ZipArchiveEntry {
 
-    private Attributes manifestAttributes = null;
-    private Certificate[] certificates = null;
+    // These are always null - see https://issues.apache.org/jira/browse/COMPRESS-18 for discussion
+    private final Attributes manifestAttributes = null;
+    private final Certificate[] certificates = null;
 
     public JarArchiveEntry(ZipEntry entry) throws ZipException {
         super(entry);
@@ -53,17 +53,38 @@ public class JarArchiveEntry extends ZipArchiveEntry implements ArchiveEntry {
 
     }
 
+    /**
+     * This method is not implemented and won't ever be.
+     * The JVM equivalent has a different name {@link java.util.jar.JarEntry#getAttributes()}
+     *
+     * @deprecated since 1.5, do not use; always returns null
+     * @return Always returns null.
+     */
+    @Deprecated
     public Attributes getManifestAttributes() {
         return manifestAttributes;
     }
 
+    /**
+     * Return a copy of the list of certificates or null if there are none.
+     *
+     * @return Always returns null in the current implementation
+     *
+     * @deprecated since 1.5, not currently implemented
+     */
+    @Deprecated
     public Certificate[] getCertificates() {
-            if (certificates != null) {
-                Certificate[] certs = new Certificate[certificates.length];
-                System.arraycopy(certificates, 0, certs, 0, certs.length);
-                return certs;
-            }
-            return null;
+        if (certificates != null) { // never true currently
+            Certificate[] certs = new Certificate[certificates.length];
+            System.arraycopy(certificates, 0, certs, 0, certs.length);
+            return certs;
+        }
+        /*
+         * Note, the method
+         * Certificate[] java.util.jar.JarEntry.getCertificates()
+         * also returns null or the list of certificates (but not copied)
+         */
+        return null;
     }
 
 }

@@ -18,7 +18,10 @@
 
 package org.apache.commons.compress;
 
+import static org.junit.Assert.*;
+
 import org.apache.commons.compress.utils.ArchiveUtils;
+import org.junit.Test;
 
 public class ArchiveUtilsTest extends AbstractTestCase {
 
@@ -31,6 +34,8 @@ public class ArchiveUtilsTest extends AbstractTestCase {
             i += 2;
         }
     }
+
+    @Test
     public void testCompareBA(){
         byte[] buffer1 = {1,2,3};
         byte[] buffer2 = {1,2,3,0};
@@ -44,16 +49,18 @@ public class ArchiveUtilsTest extends AbstractTestCase {
         assertTrue(ArchiveUtils.isEqual(buffer1, buffer3));
         assertTrue(ArchiveUtils.isEqual(buffer3, buffer1));
     }
-    
+
+    @Test
     public void testCompareAscii(){
         byte[] buffer1 = {'a','b','c'};
         byte[] buffer2 = {'d','e','f',0};
         assertTrue(ArchiveUtils.matchAsciiBuffer("abc", buffer1));
         assertFalse(ArchiveUtils.matchAsciiBuffer("abc\0", buffer1));
-        assertTrue(ArchiveUtils.matchAsciiBuffer("def\0", buffer2));        
+        assertTrue(ArchiveUtils.matchAsciiBuffer("def\0", buffer2));
         assertFalse(ArchiveUtils.matchAsciiBuffer("def", buffer2));
     }
-    
+
+    @Test
     public void testAsciiConversions() {
         asciiToByteAndBackOK("");
         asciiToByteAndBackOK("abcd");

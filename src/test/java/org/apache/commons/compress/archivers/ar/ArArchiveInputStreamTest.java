@@ -18,15 +18,45 @@
 
 package org.apache.commons.compress.archivers.ar;
 
-import java.util.ArrayList;
+import static org.junit.Assert.*;
+
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
+
 import org.apache.commons.compress.AbstractTestCase;
+import org.apache.commons.compress.archivers.ArchiveEntry;
+import org.apache.commons.compress.utils.ArchiveUtils;
+import org.junit.Test;
 
 public class ArArchiveInputStreamTest extends AbstractTestCase {
 
+    @Test
     public void testReadLongNamesGNU() throws Exception {
-        ArrayList l = new ArrayList();
-        l.add("this_is_a_long_file_name.txt");
-        checkArchiveContent(getFile("longfile_gnu.ar"), l);
+        checkLongNameEntry("longfile_gnu.ar");
     }
 
+    @Test
+    public void testReadLongNamesBSD() throws Exception {
+        checkLongNameEntry("longfile_bsd.ar");
+    }
+
+    private void checkLongNameEntry(String archive) throws Exception {
+        FileInputStream fis = new FileInputStream(getFile(archive));
+        ArArchiveInputStream s = null;
+        try {
+            s = new ArArchiveInputStream(new BufferedInputStream(fis));
+            ArchiveEntry e = s.getNextEntry();
+            assertEquals("this_is_a_long_file_name.txt", e.getName());
+            assertEquals(14, e.getSize());
+            byte[] hello = new byte[14];
+            s.read(hello);
+            assertEquals("Hello, world!\n", ArchiveUtils.toAsciiString(hello));
+            assertNull(s.getNextEntry());
+        } finally {
+            if (s != null) {
+                s.close();
+            }
+            fis.close();
+        }
+    }
 }

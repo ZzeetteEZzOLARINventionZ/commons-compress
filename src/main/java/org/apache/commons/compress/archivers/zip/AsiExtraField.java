@@ -25,7 +25,7 @@ import java.util.zip.ZipException;
  * Adds Unix file permission and UID/GID fields as well as symbolic
  * link handling.
  *
- * <p>This class uses the ASi extra field in the format:
+ * <p>This class uses the ASi extra field in the format:</p>
  * <pre>
  *         Value         Size            Description
  *         -----         ----            -----------
@@ -38,9 +38,8 @@ import java.util.zip.ZipException;
  *         GID           Short           group ID
  *         (var.)        variable        symbolic link filename
  * </pre>
- * taken from appnote.iz (Info-ZIP note, 981119) found at <a
+ * <p>taken from appnote.iz (Info-ZIP note, 981119) found at <a
  * href="ftp://ftp.uu.net/pub/archiving/zip/doc/">ftp://ftp.uu.net/pub/archiving/zip/doc/</a></p>
-
  *
  * <p>Short is two bytes and Long is four bytes in big endian byte and
  * word order, device numbers are currently not supported.</p>
@@ -317,6 +316,7 @@ public class AsiExtraField implements ZipExtraField, UnixStat, Cloneable {
         return type | (mode & PERM_MASK);
     }
 
+    @Override
     public Object clone() {
         try {
             AsiExtraField cloned = (AsiExtraField) super.clone();

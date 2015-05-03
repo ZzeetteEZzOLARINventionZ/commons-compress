@@ -18,6 +18,8 @@
  */
 package org.apache.commons.compress.archivers;
 
+import static org.junit.Assert.*;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -28,13 +30,15 @@ import java.util.Map;
 
 import org.apache.commons.compress.AbstractTestCase;
 import org.apache.commons.compress.archivers.cpio.CpioArchiveEntry;
-import org.apache.commons.compress.archivers.cpio.CpioConstants;
 import org.apache.commons.compress.archivers.cpio.CpioArchiveInputStream;
 import org.apache.commons.compress.archivers.cpio.CpioArchiveOutputStream;
+import org.apache.commons.compress.archivers.cpio.CpioConstants;
 import org.apache.commons.compress.utils.IOUtils;
+import org.junit.Test;
 
 public final class CpioTestCase extends AbstractTestCase {
 
+    @Test
     public void testCpioArchiveCreation() throws Exception {
         final File output = new File(dir, "bla.cpio");
 
@@ -55,13 +59,14 @@ public final class CpioTestCase extends AbstractTestCase {
         out.close();
     }
 
+    @Test
     public void testCpioUnarchive() throws Exception {
         final File output = new File(dir, "bla.cpio");
         final File file1 = getFile("test1.xml");
         final File file2 = getFile("test2.xml");
         final long file1Length = file1.length();
         final long file2Length = file2.length();
-        
+
         {
             final OutputStream out = new FileOutputStream(output);
             final ArchiveOutputStream os = new ArchiveStreamFactory().createArchiveOutputStream("cpio", out);
@@ -87,7 +92,7 @@ public final class CpioTestCase extends AbstractTestCase {
         final ArchiveInputStream in = new ArchiveStreamFactory().createArchiveInputStream("cpio", is);
 
 
-        Map result = new HashMap();
+        Map<String, File> result = new HashMap<String, File>();
         ArchiveEntry entry = null;
         while ((entry = in.getNextEntry()) != null) {
             File cpioget = new File(dir, entry.getName());
@@ -99,15 +104,16 @@ public final class CpioTestCase extends AbstractTestCase {
         in.close();
         is.close();
 
-        File t = (File)result.get("test1.xml");
+        File t = result.get("test1.xml");
         assertTrue("Expected " + t.getAbsolutePath() + " to exist", t.exists());
         assertEquals("length of " + t.getAbsolutePath(), file1Length, t.length());
 
-        t = (File)result.get("test2.xml");
+        t = result.get("test2.xml");
         assertTrue("Expected " + t.getAbsolutePath() + " to exist", t.exists());
         assertEquals("length of " + t.getAbsolutePath(), file2Length, t.length());
     }
 
+    @Test
     public void testDirectoryEntryFromFile() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -141,14 +147,13 @@ public final class CpioTestCase extends AbstractTestCase {
             if (tos != null) {
                 tos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(archive);
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 
+    @Test
     public void testExplicitDirectoryEntry() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -183,14 +188,13 @@ public final class CpioTestCase extends AbstractTestCase {
             if (tos != null) {
                 tos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(archive);
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 
+    @Test
     public void testFileEntryFromFile() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -230,17 +234,16 @@ public final class CpioTestCase extends AbstractTestCase {
             if (tos != null) {
                 tos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
+            tryHardToDelete(archive);
             if (fis != null) {
                 fis.close();
             }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 
+    @Test
     public void testExplicitFileEntry() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -283,14 +286,12 @@ public final class CpioTestCase extends AbstractTestCase {
             if (tos != null) {
                 tos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
+            tryHardToDelete(archive);
             if (fis != null) {
                 fis.close();
             }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 }

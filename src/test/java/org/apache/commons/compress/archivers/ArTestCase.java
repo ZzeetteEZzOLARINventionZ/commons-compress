@@ -18,6 +18,8 @@
  */
 package org.apache.commons.compress.archivers;
 
+import static org.junit.Assert.*;
+
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -31,9 +33,12 @@ import org.apache.commons.compress.archivers.ar.ArArchiveEntry;
 import org.apache.commons.compress.archivers.ar.ArArchiveInputStream;
 import org.apache.commons.compress.archivers.ar.ArArchiveOutputStream;
 import org.apache.commons.compress.utils.IOUtils;
+import org.junit.Ignore;
+import org.junit.Test;
 
 public final class ArTestCase extends AbstractTestCase {
 
+    @Test
     public void testArArchiveCreation() throws Exception {
         final File output = new File(dir, "bla.ar");
 
@@ -53,6 +58,7 @@ public final class ArTestCase extends AbstractTestCase {
         os.close();
     }
 
+    @Test
     public void testArUnarchive() throws Exception {
         final File output = new File(dir, "bla.ar");
         {
@@ -88,6 +94,7 @@ public final class ArTestCase extends AbstractTestCase {
         is.close();
     }
 
+    @Test
     public void testArDelete() throws Exception {
         final File output = new File(dir, "bla.ar");
 
@@ -182,6 +189,8 @@ public final class ArTestCase extends AbstractTestCase {
     }
 
     // TODO: revisit - does AR not support storing directories?
+    @Ignore
+    @Test
     public void XtestDirectoryEntryFromFile() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -215,15 +224,15 @@ public final class ArTestCase extends AbstractTestCase {
             if (aos != null) {
                 aos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(archive);
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 
     // TODO: revisit - does AR not support storing directories?
+    @Ignore
+    @Test
     public void XtestExplicitDirectoryEntry() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -257,14 +266,13 @@ public final class ArTestCase extends AbstractTestCase {
             if (aos != null) {
                 aos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(archive);
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 
+    @Test
     public void testFileEntryFromFile() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -305,17 +313,16 @@ public final class ArTestCase extends AbstractTestCase {
             if (aos != null) {
                 aos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
+            tryHardToDelete(archive);
             if (fis != null) {
                 fis.close();
             }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 
+    @Test
     public void testExplicitFileEntry() throws Exception {
         File[] tmp = createTempDirAndFile();
         File archive = null;
@@ -357,14 +364,12 @@ public final class ArTestCase extends AbstractTestCase {
             if (aos != null) {
                 aos.close();
             }
-            if (archive != null) {
-                archive.delete();
-            }
+            tryHardToDelete(archive);
             if (fis != null) {
                 fis.close();
             }
-            tmp[1].delete();
-            tmp[0].delete();
+            tryHardToDelete(tmp[1]);
+            rmdir(tmp[0]);
         }
     }
 }

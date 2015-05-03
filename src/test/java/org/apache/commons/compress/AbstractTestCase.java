@@ -18,7 +18,9 @@
  */
 package org.apache.commons.compress;
 
+import static org.junit.Assert.*;
 import java.io.BufferedInputStream;
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -26,95 +28,124 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
+import java.net.URL;
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.Arrays;
 import java.util.List;
-
-import junit.framework.TestCase;
+import java.util.Locale;
 
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ArchiveInputStream;
 import org.apache.commons.compress.archivers.ArchiveOutputStream;
 import org.apache.commons.compress.archivers.ArchiveStreamFactory;
 import org.apache.commons.compress.utils.IOUtils;
+import org.junit.After;
+import org.junit.Before;
 
-public abstract class AbstractTestCase extends TestCase {
+public abstract class AbstractTestCase {
 
     protected File dir;
     protected File resultDir;
 
     private File archive; // used to delete the archive in tearDown
-    protected List archiveList; // Lists the content of the archive as originally created
-    
+    protected List<String> archiveList; // Lists the content of the archive as originally created
+
     protected ArchiveStreamFactory factory = new ArchiveStreamFactory();
 
-    public AbstractTestCase() {
-        super();
-    }
-
-    public AbstractTestCase(String name) {
-        super(name);
-    }
-
-    protected void setUp() throws Exception {
+    @Before
+    public void setUp() throws Exception {
         dir = mkdir("dir");
         resultDir = mkdir("dir-result");
         archive = null;
     }
 
-    protected static File mkdir(String name) throws IOException {
+    public static File mkdir(String name) throws IOException {
         File f = File.createTempFile(name, "");
         f.delete();
         f.mkdir();
         return f;
     }
 
-    protected File getFile(String path) {
-        return new File("src/test/resources", path);
+    public static File getFile(String path) throws IOException {
+        URL url = AbstractTestCase.class.getClassLoader().getResource(path);
+        if (url == null) {
+            throw new FileNotFoundException("couldn't find " + path);
+        }
+        URI uri = null;
+        try {
+            uri = url.toURI();
+        } catch (java.net.URISyntaxException ex) {
+//          throw new IOException(ex); // JDK 1.6+
+            IOException ioe = new IOException();
+            ioe.initCause(ex);
+            throw ioe;
+        }
+        return new File(uri);
     }
 
-    protected void tearDown() throws Exception {
+    @After
+    public void tearDown() throws Exception {
         rmdir(dir);
         rmdir(resultDir);
         dir = resultDir = null;
-        if (archive != null && archive.exists()) {
-            if (!archive.delete()){
-                // Note: this exception won't be shown if the test has already failed
-                throw new Exception("Could not delete "+archive.getPath());
-            }
+        if (!tryHardToDelete(archive)) {
+            // Note: this exception won't be shown if the test has already failed
+            throw new Exception("Could not delete "+archive.getPath());
         }
     }
 
-    protected static void rmdir(File f) {
-        // Sometimes fails without a pause - perhaps file close is partially asynchronous?
-        try {
-            Thread.sleep(20);
-        } catch (InterruptedException e) {
-        }
+    public static void rmdir(File f) {
         String[] s = f.list();
         if (s != null) {
-            for (int i = 0; i < s.length; i++) {
-                final File file = new File(f, s[i]);
+            for (String element : s) {
+                final File file = new File(f, element);
                 if (file.isDirectory()){
                     rmdir(file);
                 }
-                boolean ok = file.delete();
+                boolean ok = tryHardToDelete(file);
                 if (!ok && file.exists()){
-                    System.out.println("Failed to delete "+s[i]+" in "+f.getPath());
+                    System.out.println("Failed to delete "+element+" in "+f.getPath());
                 }
             }
         }
-        f.delete(); // safer to delete and check
+        tryHardToDelete(f); // safer to delete and check
         if (f.exists()){
             throw new Error("Failed to delete "+f.getPath());
         }
+    }
+
+    private static final boolean ON_WINDOWS =
+            System.getProperty("os.name").toLowerCase(Locale.ENGLISH).contains("windows");
+
+    /**
+     * Accommodate Windows bug encountered in both Sun and IBM JDKs.
+     * Others possible. If the delete does not work, call System.gc(),
+     * wait a little and try again.
+     *
+     * @return whether deletion was successful
+     * @since Stolen from FileUtils in Ant 1.8.0
+     */
+    public static boolean tryHardToDelete(File f) {
+        if (f != null && f.exists() && !f.delete()) {
+            if (ON_WINDOWS) {
+                System.gc();
+            }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException ex) {
+                // Ignore Exception
+            }
+            return f.delete();
+        }
+        return true;
     }
 
     /**
      * Creates an archive of textbased files in several directories. The
      * archivername is the factory identifier for the archiver, for example zip,
      * tar, cpio, jar, ar. The archive is created as a temp file.
-     * 
+     *
      * The archive contains the following files:
      * <ul>
      * <li>testdata/test1.xml</li>
@@ -127,7 +158,7 @@ public abstract class AbstractTestCase extends TestCase {
      * <li>something/bla</li>
      * <li>test with spaces.txt</li>
      * </ul>
-     * 
+     *
      * @param archivename
      *            the identifier of this archive
      * @return the newly created file
@@ -139,7 +170,8 @@ public abstract class AbstractTestCase extends TestCase {
         OutputStream stream = null;
         try {
             archive = File.createTempFile("test", "." + archivename);
-            archiveList = new ArrayList();
+            archive.deleteOnExit();
+            archiveList = new ArrayList<String>();
 
             stream = new FileOutputStream(archive);
             out = factory.createArchiveOutputStream(archivename, stream);
@@ -174,7 +206,7 @@ public abstract class AbstractTestCase extends TestCase {
 
     /**
      * Add an entry to the archive, and keep track of the names in archiveList.
-     * 
+     *
      * @param out
      * @param file1
      * @throws IOException
@@ -198,9 +230,10 @@ public abstract class AbstractTestCase extends TestCase {
     protected File createEmptyArchive(String archivename) throws Exception {
         ArchiveOutputStream out = null;
         OutputStream stream = null;
-        archiveList = new ArrayList();
+        archiveList = new ArrayList<String>();
         try {
             archive = File.createTempFile("empty", "." + archivename);
+            archive.deleteOnExit();
             stream = new FileOutputStream(archive);
             out = factory.createArchiveOutputStream(archivename, stream);
             out.finish();
@@ -216,7 +249,7 @@ public abstract class AbstractTestCase extends TestCase {
 
     /**
      * Create an archive with a single file "test1.xml".
-     * 
+     *
      * @param archivename
      * @return the archive File
      * @throws Exception
@@ -224,9 +257,10 @@ public abstract class AbstractTestCase extends TestCase {
     protected File createSingleEntryArchive(String archivename) throws Exception {
         ArchiveOutputStream out = null;
         OutputStream stream = null;
-        archiveList = new ArrayList();
+        archiveList = new ArrayList<String>();
         try {
             archive = File.createTempFile("empty", "." + archivename);
+            archive.deleteOnExit();
             stream = new FileOutputStream(archive);
             out = factory.createArchiveOutputStream(archivename, stream);
             // Use short file name so does not cause problems for ar
@@ -244,14 +278,14 @@ public abstract class AbstractTestCase extends TestCase {
 
     /**
      * Checks if an archive contains all expected files.
-     * 
+     *
      * @param archive
      *            the archive to check
      * @param expected
      *            a list with expected string filenames
      * @throws Exception
      */
-    protected void checkArchiveContent(File archive, List expected)
+    protected void checkArchiveContent(File archive, List<String> expected)
             throws Exception {
         final InputStream is = new FileInputStream(archive);
         try {
@@ -265,30 +299,29 @@ public abstract class AbstractTestCase extends TestCase {
 
     /**
      * Checks that an archive input stream can be read, and that the file data matches file sizes.
-     * 
+     *
      * @param in
-     * @param expected list of expected entries or <code>null</code> if no check of names desired
+     * @param expected list of expected entries or {@code null} if no check of names desired
      * @throws Exception
      */
-    protected void checkArchiveContent(ArchiveInputStream in, List expected)
+    protected void checkArchiveContent(ArchiveInputStream in, List<String> expected)
             throws Exception {
         checkArchiveContent(in, expected, true);
     }
-    
+
     /**
      * Checks that an archive input stream can be read, and that the file data matches file sizes.
-     * 
+     *
      * @param in
-     * @param expected list of expected entries or <code>null</code> if no check of names desired
-     * @param cleanUp Cleans up resources if true 
-     * @return returns the created result file if cleanUp = false, or null otherwise 
+     * @param expected list of expected entries or {@code null} if no check of names desired
+     * @param cleanUp Cleans up resources if true
+     * @return returns the created result file if cleanUp = false, or null otherwise
      * @throws Exception
      */
-    protected File checkArchiveContent(ArchiveInputStream in, List expected, boolean cleanUp)
+    protected File checkArchiveContent(ArchiveInputStream in, List<String> expected, boolean cleanUp)
             throws Exception {
-        File result = File.createTempFile("dir-result", "");
-        result.delete();
-        result.mkdir();
+        File result = mkdir("dir-result");
+        result.deleteOnExit();
 
         try {
             ArchiveEntry entry = null;
@@ -305,7 +338,7 @@ public abstract class AbstractTestCase extends TestCase {
                         copied=IOUtils.copy(in, out);
                     } finally {
                         out.close();
-                    }                    
+                    }
                 }
                 final long size = entry.getSize();
                 if (size != ArchiveEntry.SIZE_UNKNOWN) {
@@ -321,10 +354,7 @@ public abstract class AbstractTestCase extends TestCase {
             }
             in.close();
             if (expected != null && expected.size() > 0) {
-                for (Iterator iterator = expected.iterator(); iterator.hasNext();) {
-                    String name = (String) iterator.next();
-                    fail("Expected entry: " + name);
-                }
+                fail(expected.size() + " missing entries: " + Arrays.toString(expected.toArray()));
             }
             if (expected != null) {
                 assertEquals(0, expected.size());
@@ -340,7 +370,7 @@ public abstract class AbstractTestCase extends TestCase {
     /**
      * Override this method to change what is to be compared in the List.
      * For example, size + name instead of just name.
-     * 
+     *
      * @param entry
      * @return returns the entry name
      */
@@ -354,10 +384,7 @@ public abstract class AbstractTestCase extends TestCase {
      * element of the two element array).
      */
     protected File[] createTempDirAndFile() throws IOException {
-        File tmpDir = File.createTempFile("testdir", "");
-        tmpDir.delete();
-        tmpDir.mkdir();
-        tmpDir.deleteOnExit();
+        File tmpDir = createTempDir();
         File tmpFile = File.createTempFile("testfile", "", tmpDir);
         tmpFile.deleteOnExit();
         FileOutputStream fos = new FileOutputStream(tmpFile);
@@ -366,6 +393,26 @@ public abstract class AbstractTestCase extends TestCase {
             return new File[] {tmpDir, tmpFile};
         } finally {
             fos.close();
-        }            
+        }
+    }
+
+    protected File createTempDir() throws IOException {
+        File tmpDir = mkdir("testdir");
+        tmpDir.deleteOnExit();
+        return tmpDir;
+    }
+
+    protected void closeQuietly(Closeable closeable){
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (IOException ignored) {
+                // ignored
+            }
+        }
+    }
+
+    protected static interface StreamWrapper<I extends InputStream> {
+        I wrap(InputStream in) throws Exception;
     }
 }

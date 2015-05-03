@@ -18,9 +18,11 @@
 package org.apache.commons.compress.archivers.zip;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
 
 /**
  * Utility class for handling DOS and Java time conversions.
@@ -49,29 +51,47 @@ public abstract class ZipUtil {
      * @return the date as a byte array
      */
     public static byte[] toDosTime(long t) {
-        Calendar c = Calendar.getInstance();
+        byte[] result = new byte[4];
+        toDosTime(t, result, 0);
+        return result;
+    }
+
+    /**
+     * Convert a Date object to a DOS date/time field.
+     *
+     * <p>Stolen from InfoZip's <code>fileio.c</code></p>
+     * @param t number of milliseconds since the epoch
+     * @param buf the output buffer
+     * @param offset
+     *         The offset within the output buffer of the first byte to be written.
+     *         must be non-negative and no larger than <tt>buf.length-4</tt>
+     */
+    public static void toDosTime(long t, byte[] buf, int offset) {
+        toDosTime(Calendar.getInstance(), t, buf, offset);
+    }
+
+    static void toDosTime(Calendar c, long t, byte[] buf, int offset) {
         c.setTimeInMillis(t);
 
         int year = c.get(Calendar.YEAR);
         if (year < 1980) {
-            return copy(DOS_TIME_MIN); // stop callers from changing the array
+            System.arraycopy(DOS_TIME_MIN, 0, buf, offset, DOS_TIME_MIN.length);// stop callers from changing the array
+            return;
         }
         int month = c.get(Calendar.MONTH) + 1;
         long value =  ((year - 1980) << 25)
-            |         (month << 21)
-            |         (c.get(Calendar.DAY_OF_MONTH) << 16)
-            |         (c.get(Calendar.HOUR_OF_DAY) << 11)
-            |         (c.get(Calendar.MINUTE) << 5)
-            |         (c.get(Calendar.SECOND) >> 1);
-        return ZipLong.getBytes(value);
+                |         (month << 21)
+                |         (c.get(Calendar.DAY_OF_MONTH) << 16)
+                |         (c.get(Calendar.HOUR_OF_DAY) << 11)
+                |         (c.get(Calendar.MINUTE) << 5)
+                |         (c.get(Calendar.SECOND) >> 1);
+        ZipLong.putLong(value, buf, offset);
     }
+
 
     /**
      * Assumes a negative integer really is a positive integer that
      * has wrapped around and re-creates the original value.
-     *
-     * <p>This methods is no longer used as of Apache Commons Compress
-     * 1.3</p>
      *
      * @param i the value to treat as unsigned int.
      * @return the unsigned int as a long.
@@ -81,6 +101,99 @@ public abstract class ZipUtil {
             return 2 * ((long) Integer.MAX_VALUE) + 2 + i;
         } else {
             return i;
+        }
+    }
+
+    /**
+     * Reverses a byte[] array.  Reverses in-place (thus provided array is
+     * mutated), but also returns same for convenience.
+     *
+     * @param array to reverse (mutated in-place, but also returned for
+     *        convenience).
+     *
+     * @return the reversed array (mutated in-place, but also returned for
+     *        convenience).
+     * @since 1.5
+     */
+    public static byte[] reverse(final byte[] array) {
+        final int z = array.length - 1; // position of last element
+        for (int i = 0; i < array.length / 2; i++) {
+            byte x = array[i];
+            array[i] = array[z - i];
+            array[z - i] = x;
+        }
+        return array;
+    }
+
+    /**
+     * Converts a BigInteger into a long, and blows up
+     * (NumberFormatException) if the BigInteger is too big.
+     *
+     * @param big BigInteger to convert.
+     * @return long representation of the BigInteger.
+     */
+    static long bigToLong(BigInteger big) {
+        if (big.bitLength() <= 63) { // bitLength() doesn't count the sign bit.
+            return big.longValue();
+        } else {
+            throw new NumberFormatException("The BigInteger cannot fit inside a 64 bit java long: [" + big + "]");
+        }
+    }
+
+    /**
+     * <p>
+     * Converts a long into a BigInteger.  Negative numbers between -1 and
+     * -2^31 are treated as unsigned 32 bit (e.g., positive) integers.
+     * Negative numbers below -2^31 cause an IllegalArgumentException
+     * to be thrown.
+     * </p>
+     *
+     * @param l long to convert to BigInteger.
+     * @return BigInteger representation of the provided long.
+     */
+    static BigInteger longToBig(long l) {
+        if (l < Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("Negative longs < -2^31 not permitted: [" + l + "]");
+        } else if (l < 0 && l >= Integer.MIN_VALUE) {
+            // If someone passes in a -2, they probably mean 4294967294
+            // (For example, Unix UID/GID's are 32 bit unsigned.)
+            l = ZipUtil.adjustToLong((int) l);
+        }
+        return BigInteger.valueOf(l);
+    }
+
+    /**
+     * Converts a signed byte into an unsigned integer representation
+     * (e.g., -1 becomes 255).
+     *
+     * @param b byte to convert to int
+     * @return int representation of the provided byte
+     * @since 1.5
+     */
+    public static int signedByteToUnsignedInt(byte b) {
+        if (b >= 0) {
+            return b;
+        } else {
+            return 256 + b;
+        }
+    }
+
+    /**
+     * Converts an unsigned integer to a signed byte (e.g., 255 becomes -1).
+     *
+     * @param i integer to convert to byte
+     * @return byte representation of the provided int
+     * @throws IllegalArgumentException if the provided integer is not inside the range [0,255].
+     * @since 1.5
+     */
+    public static byte unsignedIntToSignedByte(int i) {
+        if (i > 255 || i < 0) {
+            throw new IllegalArgumentException("Can only convert non-negative integers between [0,255] to byte: [" + i + "]");
+        }
+        if (i < 128) {
+            return (byte) i;
+        } else {
+            return (byte) (i - 256);
         }
     }
 
@@ -108,6 +221,7 @@ public abstract class ZipUtil {
         cal.set(Calendar.HOUR_OF_DAY, (int) (dosTime >> 11) & 0x1f);
         cal.set(Calendar.MINUTE, (int) (dosTime >> 5) & 0x3f);
         cal.set(Calendar.SECOND, (int) (dosTime << 1) & 0x3e);
+        cal.set(Calendar.MILLISECOND, 0);
         // CheckStyle:MagicNumberCheck ON
         return cal.getTime().getTime();
     }
@@ -183,6 +297,12 @@ public abstract class ZipUtil {
         }
         return null;
     }
+    static void copy(byte[] from, byte[] to, int offset) {
+        if (from != null) {
+            System.arraycopy(from, 0, to, offset, from.length);
+        }
+    }
+
 
     /**
      * Whether this library is able to read or write the given entry.
@@ -208,8 +328,10 @@ public abstract class ZipUtil {
      * @return true if the compression method is STORED or DEFLATED
      */
     private static boolean supportsMethodOf(ZipArchiveEntry entry) {
-        return entry.getMethod() == ZipArchiveEntry.STORED
-            || entry.getMethod() == ZipArchiveEntry.DEFLATED;
+        return entry.getMethod() == ZipEntry.STORED
+            || entry.getMethod() == ZipMethod.UNSHRINKING.getCode()
+            || entry.getMethod() == ZipMethod.IMPLODING.getCode()
+            || entry.getMethod() == ZipEntry.DEFLATED;
     }
 
     /**
@@ -224,9 +346,14 @@ public abstract class ZipUtil {
                                                    .Feature.ENCRYPTION, ze);
         }
         if (!supportsMethodOf(ze)) {
-            throw
-                new UnsupportedZipFeatureException(UnsupportedZipFeatureException
-                                                   .Feature.METHOD, ze);
+            ZipMethod m = ZipMethod.getMethodByCode(ze.getMethod());
+            if (m == null) {
+                throw
+                    new UnsupportedZipFeatureException(UnsupportedZipFeatureException
+                                                       .Feature.METHOD, ze);
+            } else {
+                throw new UnsupportedZipFeatureException(m, ze);
+            }
         }
     }
 }

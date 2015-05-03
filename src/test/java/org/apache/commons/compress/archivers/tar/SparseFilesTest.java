@@ -18,17 +18,19 @@
 
 package org.apache.commons.compress.archivers.tar;
 
+import static org.apache.commons.compress.AbstractTestCase.getFile;
+import static org.junit.Assert.*;
+import org.junit.Test;
+
 import java.io.File;
 import java.io.FileInputStream;
-import java.net.URI;
-import java.net.URL;
-import junit.framework.TestCase;
 
-public class SparseFilesTest extends TestCase {
 
+public class SparseFilesTest {
+
+    @Test
     public void testOldGNU() throws Throwable {
-        URL tar = getClass().getResource("/oldgnu_sparse.tar");
-        File file = new File(new URI(tar.toString()));
+        File file = getFile("oldgnu_sparse.tar");
         TarArchiveInputStream tin = null;
         try {
             tin = new TarArchiveInputStream(new FileInputStream(file));

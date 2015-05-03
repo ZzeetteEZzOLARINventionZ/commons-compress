@@ -18,34 +18,31 @@
  */
 package org.apache.commons.compress.compressors.bzip2;
 
-import java.util.HashMap;
-import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import org.apache.commons.compress.compressors.FileNameUtil;
 
 /**
  * Utility code for the BZip2 compression format.
  * @ThreadSafe
- * @since Commons Compress 1.1
+ * @since 1.1
  */
 public abstract class BZip2Utils {
 
-    /**
-     * Map from common filename suffixes of bzip2ed files to the corresponding
-     * suffixes of uncompressed files. For example: from ".tbz2" to ".tar".
-     * <p>
-     * This map also contains bzip2-specific suffixes like ".bz2". These
-     * suffixes are mapped to the empty string, as they should simply be
-     * removed from the filename when the file is uncompressed.
-     */
-    private static final Map uncompressSuffix = new HashMap();
+    private static final FileNameUtil fileNameUtil;
 
     static {
+        Map<String, String> uncompressSuffix =
+            new LinkedHashMap<String, String>();
+        // backwards compatibilty: BZip2Utils never created the short
+        // tbz form, so .tar.bz2 has to be added explicitly
+        uncompressSuffix.put(".tar.bz2", ".tar");
         uncompressSuffix.put(".tbz2", ".tar");
         uncompressSuffix.put(".tbz", ".tar");
         uncompressSuffix.put(".bz2", "");
         uncompressSuffix.put(".bz", "");
+        fileNameUtil = new FileNameUtil(uncompressSuffix, ".bz2");
     }
-    // N.B. if any shorter or longer keys are added, ensure the for loop limits are changed
 
     /** Private constructor to prevent instantiation of this utility class. */
     private BZip2Utils() {
@@ -55,19 +52,11 @@ public abstract class BZip2Utils {
      * Detects common bzip2 suffixes in the given filename.
      *
      * @param filename name of a file
-     * @return <code>true</code> if the filename has a common bzip2 suffix,
-     *         <code>false</code> otherwise
+     * @return {@code true} if the filename has a common bzip2 suffix,
+     *         {@code false} otherwise
      */
     public static boolean isCompressedFilename(String filename) {
-        String lower = filename.toLowerCase(Locale.ENGLISH);
-        int n = lower.length();
-        // Shortest suffix is three letters (.bz), longest is five (.tbz2)
-        for (int i = 3; i <= 5 && i < n; i++) {
-            if (uncompressSuffix.containsKey(lower.substring(n - i))) {
-                return true;
-            }
-        }
-        return false;
+        return fileNameUtil.isCompressedFilename(filename);
     }
 
     /**
@@ -84,16 +73,7 @@ public abstract class BZip2Utils {
      * @return name of the corresponding uncompressed file
      */
     public static String getUncompressedFilename(String filename) {
-        String lower = filename.toLowerCase(Locale.ENGLISH);
-        int n = lower.length();
-        // Shortest suffix is three letters (.bz), longest is five (.tbz2)
-        for (int i = 3; i <= 5 && i < n; i++) {
-            Object suffix = uncompressSuffix.get(lower.substring(n - i));
-            if (suffix != null) {
-                return filename.substring(0, n - i) + suffix;
-            }
-        }
-        return filename;
+        return fileNameUtil.getUncompressedFilename(filename);
     }
 
     /**
@@ -107,7 +87,7 @@ public abstract class BZip2Utils {
      * @return name of the corresponding compressed file
      */
     public static String getCompressedFilename(String filename) {
-        return filename + ".bz2";
+        return fileNameUtil.getCompressedFilename(filename);
     }
 
 }

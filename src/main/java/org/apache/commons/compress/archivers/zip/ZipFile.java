@@ -17,6 +17,9 @@
  */
 package org.apache.commons.compress.archivers.zip;
 
+import java.io.BufferedInputStream;
+import java.io.Closeable;
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,11 +29,20 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 import java.util.zip.ZipException;
+
+import org.apache.commons.compress.utils.IOUtils;
+
+import static org.apache.commons.compress.archivers.zip.ZipConstants.DWORD;
+import static org.apache.commons.compress.archivers.zip.ZipConstants.SHORT;
+import static org.apache.commons.compress.archivers.zip.ZipConstants.WORD;
+import static org.apache.commons.compress.archivers.zip.ZipConstants.ZIP64_MAGIC;
+import static org.apache.commons.compress.archivers.zip.ZipConstants.ZIP64_MAGIC_SHORT;
 
 /**
  * Replacement for <code>java.util.ZipFile</code>.
@@ -45,7 +57,10 @@ import java.util.zip.ZipException;
  * <p>It doesn't extend <code>java.util.zip.ZipFile</code> as it would
  * have to reimplement all methods anyway.  Like
  * <code>java.util.ZipFile</code>, it uses RandomAccessFile under the
- * covers and supports compressed and uncompressed entries.</p>
+ * covers and supports compressed and uncompressed entries.  As of
+ * Apache Commons Compress 1.3 it also transparently supports Zip64
+ * extensions and thus individual entries and archives larger than 4
+ * GB or with more than 65536 entries.</p>
  *
  * <p>The method signatures mimic the ones of
  * <code>java.util.zip.ZipFile</code>, with a couple of exceptions:
@@ -60,10 +75,8 @@ import java.util.zip.ZipException;
  * </ul>
  *
  */
-public class ZipFile {
+public class ZipFile implements Closeable {
     private static final int HASH_SIZE = 509;
-    private static final int SHORT     =   2;
-    private static final int WORD      =   4;
     static final int NIBLET_MASK = 0x0f;
     static final int BYTE_SHIFT = 8;
     private static final int POS_0 = 0;
@@ -72,15 +85,17 @@ public class ZipFile {
     private static final int POS_3 = 3;
 
     /**
-     * Maps ZipArchiveEntrys to Longs, recording the offsets of the local
-     * file headers.
+     * List of entries in the order they appear inside the central
+     * directory.
      */
-    private final Map entries = new LinkedHashMap(HASH_SIZE);
+    private final List<ZipArchiveEntry> entries =
+        new LinkedList<ZipArchiveEntry>();
 
     /**
-     * Maps String to ZipArchiveEntrys, name -> actual entry.
+     * Maps String to list of ZipArchiveEntrys, name -> actual entries.
      */
-    private final Map nameMap = new HashMap(HASH_SIZE);
+    private final Map<String, LinkedList<ZipArchiveEntry>> nameMap =
+        new HashMap<String, LinkedList<ZipArchiveEntry>>(HASH_SIZE);
 
     private static final class OffsetEntry {
         private long headerOffset = -1;
@@ -119,7 +134,13 @@ public class ZipFile {
     /**
      * Whether the file is closed.
      */
-    private boolean closed;
+    private volatile boolean closed = true;
+
+    // cached buffers - must only be used locally in the class (COMPRESS-172 - reduce garbage collection)
+    private final byte[] DWORD_BUF = new byte[DWORD];
+    private final byte[] WORD_BUF = new byte[WORD];
+    private final byte[] CFH_BUF = new byte[CFH_LEN];
+    private final byte[] SHORT_BUF = new byte[SHORT];
 
     /**
      * Opens the given file for reading, assuming "UTF8" for file names.
@@ -192,17 +213,14 @@ public class ZipFile {
         archive = new RandomAccessFile(f, "r");
         boolean success = false;
         try {
-            Map entriesWithoutUTF8Flag = populateFromCentralDirectory();
+            Map<ZipArchiveEntry, NameAndComment> entriesWithoutUTF8Flag =
+                populateFromCentralDirectory();
             resolveLocalFileHeaderData(entriesWithoutUTF8Flag);
             success = true;
         } finally {
+            closed = !success;
             if (!success) {
-                try {
-                    closed = true;
-                    archive.close();
-                } catch (IOException e2) { // NOPMD
-                    // swallow, throw the original exception instead
-                }
+                IOUtils.closeQuietly(archive);
             }
         }
     }
@@ -235,13 +253,7 @@ public class ZipFile {
      * @param zipfile file to close, can be null
      */
     public static void closeQuietly(ZipFile zipfile) {
-        if (zipfile != null) {
-            try {
-                zipfile.close();
-            } catch (IOException e) { // NOPMD
-                //ignore, that's why the method is called "quietly"
-            }
-        }
+        IOUtils.closeQuietly(zipfile);
     }
 
     /**
@@ -252,8 +264,8 @@ public class ZipFile {
      *
      * @return all entries as {@link ZipArchiveEntry} instances
      */
-    public Enumeration getEntries() {
-        return Collections.enumeration(entries.keySet());
+    public Enumeration<ZipArchiveEntry> getEntries() {
+        return Collections.enumeration(entries);
     }
 
     /**
@@ -264,23 +276,62 @@ public class ZipFile {
      *
      * @return all entries as {@link ZipArchiveEntry} instances
      *
-     * @since Commons Compress 1.1
+     * @since 1.1
      */
-    public Enumeration getEntriesInPhysicalOrder() {
-        Object[] allEntries = entries.keySet().toArray();
+    public Enumeration<ZipArchiveEntry> getEntriesInPhysicalOrder() {
+        ZipArchiveEntry[] allEntries = entries.toArray(new ZipArchiveEntry[entries.size()]);
         Arrays.sort(allEntries, OFFSET_COMPARATOR);
         return Collections.enumeration(Arrays.asList(allEntries));
     }
 
     /**
-     * Returns a named entry - or <code>null</code> if no entry by
+     * Returns a named entry - or {@code null} if no entry by
      * that name exists.
+     *
+     * <p>If multiple entries with the same name exist the first entry
+     * in the archive's central directory by that name is
+     * returned.</p>
+     *
      * @param name name of the entry.
      * @return the ZipArchiveEntry corresponding to the given name - or
-     * <code>null</code> if not present.
+     * {@code null} if not present.
      */
     public ZipArchiveEntry getEntry(String name) {
-        return (ZipArchiveEntry) nameMap.get(name);
+        LinkedList<ZipArchiveEntry> entriesOfThatName = nameMap.get(name);
+        return entriesOfThatName != null ? entriesOfThatName.getFirst() : null;
+    }
+
+    /**
+     * Returns all named entries in the same order they appear within
+     * the archive's central directory.
+     *
+     * @param name name of the entry.
+     * @return the Iterable&lt;ZipArchiveEntry&gt; corresponding to the
+     * given name
+     * @since 1.6
+     */
+    public Iterable<ZipArchiveEntry> getEntries(String name) {
+        List<ZipArchiveEntry> entriesOfThatName = nameMap.get(name);
+        return entriesOfThatName != null ? entriesOfThatName
+            : Collections.<ZipArchiveEntry>emptyList();
+    }
+
+    /**
+     * Returns all named entries in the same order their contents
+     * appear within the archive.
+     *
+     * @param name name of the entry.
+     * @return the Iterable&lt;ZipArchiveEntry&gt; corresponding to the
+     * given name
+     * @since 1.6
+     */
+    public Iterable<ZipArchiveEntry> getEntriesInPhysicalOrder(String name) {
+        ZipArchiveEntry[] entriesOfThatName = new ZipArchiveEntry[0];
+        if (nameMap.containsKey(name)) {
+            entriesOfThatName = nameMap.get(name).toArray(entriesOfThatName);
+            Arrays.sort(entriesOfThatName, OFFSET_COMPARATOR);
+        }
+        return Arrays.asList(entriesOfThatName);
     }
 
     /**
@@ -288,10 +339,48 @@ public class ZipFile {
      *
      * <p>May return false if it is set up to use encryption or a
      * compression method that hasn't been implemented yet.</p>
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     public boolean canReadEntryData(ZipArchiveEntry ze) {
         return ZipUtil.canHandleEntryData(ze);
+    }
+
+    /**
+     * Expose the raw stream of the archive entry (compressed form)
+     * <p/>
+     * This method does not relate to how/if we understand the payload in the
+     * stream, since we really only intend to move it on to somewhere else.
+     *
+     * @param ze The entry to get the stream for
+     * @return The raw input stream containing (possibly) compressed data.
+     */
+    private InputStream getRawInputStream(ZipArchiveEntry ze) {
+        if (!(ze instanceof Entry)) {
+            return null;
+        }
+        OffsetEntry offsetEntry = ((Entry) ze).getOffsetEntry();
+        long start = offsetEntry.dataOffset;
+        return new BoundedInputStream(start, ze.getCompressedSize());
+    }
+
+
+    /**
+     * Transfer selected entries from this zipfile to a given #ZipArchiveOutputStream.
+     * Compression and all other attributes will be as in this file.
+     * This method transfers entries based on the central directory of the zip file.
+     *
+     * @param target The zipArchiveOutputStream to write the entries to
+     * @param predicate A predicate that selects which entries to write
+     */
+    public void copyRawEntries(ZipArchiveOutputStream target, ZipArchiveEntryPredicate predicate)
+            throws IOException {
+        Enumeration<ZipArchiveEntry> src = getEntriesInPhysicalOrder();
+        while (src.hasMoreElements()) {
+            ZipArchiveEntry entry = src.nextElement();
+            if (predicate.test( entry)) {
+                target.addRawArchiveEntry(entry, getRawInputStream(entry));
+            }
+        }
     }
 
     /**
@@ -299,26 +388,33 @@ public class ZipFile {
      *
      * @param ze the entry to get the stream for.
      * @return a stream to read the entry from.
-     * @throws IOException if unable to create an input stream from the zipenty
+     * @throws IOException if unable to create an input stream from the zipentry
      * @throws ZipException if the zipentry uses an unsupported feature
      */
     public InputStream getInputStream(ZipArchiveEntry ze)
         throws IOException, ZipException {
-        OffsetEntry offsetEntry = (OffsetEntry) entries.get(ze);
-        if (offsetEntry == null) {
+        if (!(ze instanceof Entry)) {
             return null;
         }
+        // cast valididty is checked just above
+        OffsetEntry offsetEntry = ((Entry) ze).getOffsetEntry();
         ZipUtil.checkRequestedFeatures(ze);
         long start = offsetEntry.dataOffset;
         BoundedInputStream bis =
             new BoundedInputStream(start, ze.getCompressedSize());
-        switch (ze.getMethod()) {
-            case ZipArchiveEntry.STORED:
+        switch (ZipMethod.getMethodByCode(ze.getMethod())) {
+            case STORED:
                 return bis;
-            case ZipArchiveEntry.DEFLATED:
+            case UNSHRINKING:
+                return new UnshrinkingInputStream(bis);
+            case IMPLODING:
+                return new ExplodingInputStream(ze.getGeneralPurposeBit().getSlidingDictionarySize(),
+                        ze.getGeneralPurposeBit().getNumberOfShannonFanoTrees(), new BufferedInputStream(bis));
+            case DEFLATED:
                 bis.addDummy();
                 final Inflater inflater = new Inflater(true);
                 return new InflaterInputStream(bis, inflater) {
+                    @Override
                     public void close() throws IOException {
                         super.close();
                         inflater.end();
@@ -331,10 +427,42 @@ public class ZipFile {
     }
 
     /**
+     * <p>
+     * Convenience method to return the entry's content as a String if isUnixSymlink()
+     * returns true for it, otherwise returns null.
+     * </p>
+     *
+     * <p>This method assumes the symbolic link's file name uses the
+     * same encoding that as been specified for this ZipFile.</p>
+     *
+     * @param entry ZipArchiveEntry object that represents the symbolic link
+     * @return entry's content as a String
+     * @throws IOException problem with content's input stream
+     * @since 1.5
+     */
+    public String getUnixSymlink(ZipArchiveEntry entry) throws IOException {
+        if (entry != null && entry.isUnixSymlink()) {
+            InputStream in = null;
+            try {
+                in = getInputStream(entry);
+                byte[] symlinkBytes = IOUtils.toByteArray(in);
+                return zipEncoding.decode(symlinkBytes);
+            } finally {
+                if (in != null) {
+                    in.close();
+                }
+            }
+        } else {
+            return null;
+        }
+    }
+
+    /**
      * Ensures that the close method of this zipfile is called when
      * there are no more references to it.
      * @see #close()
      */
+    @Override
     protected void finalize() throws Throwable {
         try {
             if (!closed) {
@@ -347,6 +475,10 @@ public class ZipFile {
         }
     }
 
+    /**
+     * Length of a "central directory" entry structure without file
+     * name, extra fields or comment.
+     */
     private static final int CFH_LEN =
         /* version made by                 */ SHORT
         /* version needed to extract       */ + SHORT
@@ -365,6 +497,9 @@ public class ZipFile {
         /* external file attributes        */ + WORD
         /* relative offset of local header */ + WORD;
 
+    private static final long CFH_SIG =
+        ZipLong.getValue(ZipArchiveOutputStream.CFH_SIG);
+
     /**
      * Reads the central directory of the given archive and populates
      * the internal tables with ZipArchiveEntry instances.
@@ -373,112 +508,175 @@ public class ZipFile {
      * the central directory alone, but not the data that requires the
      * local file header or additional data to be read.</p>
      *
-     * @return a Map&lt;ZipArchiveEntry, NameAndComment>&gt; of
-     * zipentries that didn't have the language encoding flag set when
-     * read.
+     * @return a map of zipentries that didn't have the language
+     * encoding flag set when read.
      */
-    private Map populateFromCentralDirectory()
+    private Map<ZipArchiveEntry, NameAndComment> populateFromCentralDirectory()
         throws IOException {
-        HashMap noUTF8Flag = new HashMap();
+        HashMap<ZipArchiveEntry, NameAndComment> noUTF8Flag =
+            new HashMap<ZipArchiveEntry, NameAndComment>();
 
         positionAtCentralDirectory();
 
-        byte[] cfh = new byte[CFH_LEN];
+        archive.readFully(WORD_BUF);
+        long sig = ZipLong.getValue(WORD_BUF);
 
-        byte[] signatureBytes = new byte[WORD];
-        archive.readFully(signatureBytes);
-        long sig = ZipLong.getValue(signatureBytes);
-        final long cfhSig = ZipLong.getValue(ZipArchiveOutputStream.CFH_SIG);
-        if (sig != cfhSig && startsWithLocalFileHeader()) {
+        if (sig != CFH_SIG && startsWithLocalFileHeader()) {
             throw new IOException("central directory is empty, can't expand"
                                   + " corrupt archive.");
         }
-        while (sig == cfhSig) {
-            archive.readFully(cfh);
-            int off = 0;
-            ZipArchiveEntry ze = new ZipArchiveEntry();
 
-            int versionMadeBy = ZipShort.getValue(cfh, off);
-            off += SHORT;
-            ze.setPlatform((versionMadeBy >> BYTE_SHIFT) & NIBLET_MASK);
-
-            off += SHORT; // skip version info
-
-            final GeneralPurposeBit gpFlag = GeneralPurposeBit.parse(cfh, off);
-            final boolean hasUTF8Flag = gpFlag.usesUTF8ForNames();
-            final ZipEncoding entryEncoding =
-                hasUTF8Flag ? ZipEncodingHelper.UTF8_ZIP_ENCODING : zipEncoding;
-            ze.setGeneralPurposeBit(gpFlag);
-
-            off += SHORT;
-
-            ze.setMethod(ZipShort.getValue(cfh, off));
-            off += SHORT;
-
-            // FIXME this is actually not very cpu cycles friendly as we are converting from
-            // dos to java while the underlying Sun implementation will convert
-            // from java to dos time for internal storage...
-            long time = ZipUtil.dosToJavaTime(ZipLong.getValue(cfh, off));
-            ze.setTime(time);
-            off += WORD;
-
-            ze.setCrc(ZipLong.getValue(cfh, off));
-            off += WORD;
-
-            ze.setCompressedSize(ZipLong.getValue(cfh, off));
-            off += WORD;
-
-            ze.setSize(ZipLong.getValue(cfh, off));
-            off += WORD;
-
-            int fileNameLen = ZipShort.getValue(cfh, off);
-            off += SHORT;
-
-            int extraLen = ZipShort.getValue(cfh, off);
-            off += SHORT;
-
-            int commentLen = ZipShort.getValue(cfh, off);
-            off += SHORT;
-
-            off += SHORT; // disk number
-
-            ze.setInternalAttributes(ZipShort.getValue(cfh, off));
-            off += SHORT;
-
-            ze.setExternalAttributes(ZipLong.getValue(cfh, off));
-            off += WORD;
-
-            byte[] fileName = new byte[fileNameLen];
-            archive.readFully(fileName);
-            ze.setName(entryEncoding.decode(fileName), fileName);
-
-            // LFH offset,
-            OffsetEntry offset = new OffsetEntry();
-            offset.headerOffset = ZipLong.getValue(cfh, off);
-            // data offset will be filled later
-            entries.put(ze, offset);
-
-            nameMap.put(ze.getName(), ze);
-
-            byte[] cdExtraData = new byte[extraLen];
-            archive.readFully(cdExtraData);
-            ze.setCentralDirectoryExtra(cdExtraData);
-
-            byte[] comment = new byte[commentLen];
-            archive.readFully(comment);
-            ze.setComment(entryEncoding.decode(comment));
-
-            archive.readFully(signatureBytes);
-            sig = ZipLong.getValue(signatureBytes);
-
-            if (!hasUTF8Flag && useUnicodeExtraFields) {
-                noUTF8Flag.put(ze, new NameAndComment(fileName, comment));
-            }
+        while (sig == CFH_SIG) {
+            readCentralDirectoryEntry(noUTF8Flag);
+            archive.readFully(WORD_BUF);
+            sig = ZipLong.getValue(WORD_BUF);
         }
         return noUTF8Flag;
     }
 
-    private static final int MIN_EOCD_SIZE =
+    /**
+     * Reads an individual entry of the central directory, creats an
+     * ZipArchiveEntry from it and adds it to the global maps.
+     *
+     * @param noUTF8Flag map used to collect entries that don't have
+     * their UTF-8 flag set and whose name will be set by data read
+     * from the local file header later.  The current entry may be
+     * added to this map.
+     */
+    private void
+        readCentralDirectoryEntry(Map<ZipArchiveEntry, NameAndComment> noUTF8Flag)
+        throws IOException {
+        archive.readFully(CFH_BUF);
+        int off = 0;
+        OffsetEntry offset = new OffsetEntry();
+        Entry ze = new Entry(offset);
+
+        int versionMadeBy = ZipShort.getValue(CFH_BUF, off);
+        off += SHORT;
+        ze.setPlatform((versionMadeBy >> BYTE_SHIFT) & NIBLET_MASK);
+
+        off += SHORT; // skip version info
+
+        final GeneralPurposeBit gpFlag = GeneralPurposeBit.parse(CFH_BUF, off);
+        final boolean hasUTF8Flag = gpFlag.usesUTF8ForNames();
+        final ZipEncoding entryEncoding =
+            hasUTF8Flag ? ZipEncodingHelper.UTF8_ZIP_ENCODING : zipEncoding;
+        ze.setGeneralPurposeBit(gpFlag);
+
+        off += SHORT;
+
+        ze.setMethod(ZipShort.getValue(CFH_BUF, off));
+        off += SHORT;
+
+        long time = ZipUtil.dosToJavaTime(ZipLong.getValue(CFH_BUF, off));
+        ze.setTime(time);
+        off += WORD;
+
+        ze.setCrc(ZipLong.getValue(CFH_BUF, off));
+        off += WORD;
+
+        ze.setCompressedSize(ZipLong.getValue(CFH_BUF, off));
+        off += WORD;
+
+        ze.setSize(ZipLong.getValue(CFH_BUF, off));
+        off += WORD;
+
+        int fileNameLen = ZipShort.getValue(CFH_BUF, off);
+        off += SHORT;
+
+        int extraLen = ZipShort.getValue(CFH_BUF, off);
+        off += SHORT;
+
+        int commentLen = ZipShort.getValue(CFH_BUF, off);
+        off += SHORT;
+
+        int diskStart = ZipShort.getValue(CFH_BUF, off);
+        off += SHORT;
+
+        ze.setInternalAttributes(ZipShort.getValue(CFH_BUF, off));
+        off += SHORT;
+
+        ze.setExternalAttributes(ZipLong.getValue(CFH_BUF, off));
+        off += WORD;
+
+        byte[] fileName = new byte[fileNameLen];
+        archive.readFully(fileName);
+        ze.setName(entryEncoding.decode(fileName), fileName);
+
+        // LFH offset,
+        offset.headerOffset = ZipLong.getValue(CFH_BUF, off);
+        // data offset will be filled later
+        entries.add(ze);
+
+        byte[] cdExtraData = new byte[extraLen];
+        archive.readFully(cdExtraData);
+        ze.setCentralDirectoryExtra(cdExtraData);
+
+        setSizesAndOffsetFromZip64Extra(ze, offset, diskStart);
+
+        byte[] comment = new byte[commentLen];
+        archive.readFully(comment);
+        ze.setComment(entryEncoding.decode(comment));
+
+        if (!hasUTF8Flag && useUnicodeExtraFields) {
+            noUTF8Flag.put(ze, new NameAndComment(fileName, comment));
+        }
+    }
+
+    /**
+     * If the entry holds a Zip64 extended information extra field,
+     * read sizes from there if the entry's sizes are set to
+     * 0xFFFFFFFFF, do the same for the offset of the local file
+     * header.
+     *
+     * <p>Ensures the Zip64 extra either knows both compressed and
+     * uncompressed size or neither of both as the internal logic in
+     * ExtraFieldUtils forces the field to create local header data
+     * even if they are never used - and here a field with only one
+     * size would be invalid.</p>
+     */
+    private void setSizesAndOffsetFromZip64Extra(ZipArchiveEntry ze,
+                                                 OffsetEntry offset,
+                                                 int diskStart)
+        throws IOException {
+        Zip64ExtendedInformationExtraField z64 =
+            (Zip64ExtendedInformationExtraField)
+            ze.getExtraField(Zip64ExtendedInformationExtraField.HEADER_ID);
+        if (z64 != null) {
+            boolean hasUncompressedSize = ze.getSize() == ZIP64_MAGIC;
+            boolean hasCompressedSize = ze.getCompressedSize() == ZIP64_MAGIC;
+            boolean hasRelativeHeaderOffset =
+                offset.headerOffset == ZIP64_MAGIC;
+            z64.reparseCentralDirectoryData(hasUncompressedSize,
+                                            hasCompressedSize,
+                                            hasRelativeHeaderOffset,
+                                            diskStart == ZIP64_MAGIC_SHORT);
+
+            if (hasUncompressedSize) {
+                ze.setSize(z64.getSize().getLongValue());
+            } else if (hasCompressedSize) {
+                z64.setSize(new ZipEightByteInteger(ze.getSize()));
+            }
+
+            if (hasCompressedSize) {
+                ze.setCompressedSize(z64.getCompressedSize().getLongValue());
+            } else if (hasUncompressedSize) {
+                z64.setCompressedSize(new ZipEightByteInteger(ze.getCompressedSize()));
+            }
+
+            if (hasRelativeHeaderOffset) {
+                offset.headerOffset =
+                    z64.getRelativeHeaderOffset().getLongValue();
+            }
+        }
+    }
+
+    /**
+     * Length of the "End of central directory record" - which is
+     * supposed to be the last structure of the archive - without file
+     * comment.
+     */
+    static final int MIN_EOCD_SIZE =
         /* end of central dir signature    */ WORD
         /* number of this disk             */ + SHORT
         /* number of the disk with the     */
@@ -493,9 +691,19 @@ public class ZipFile {
         /* the starting disk number        */ + WORD
         /* zipfile comment length          */ + SHORT;
 
+    /**
+     * Maximum length of the "End of central directory record" with a
+     * file comment.
+     */
     private static final int MAX_EOCD_SIZE = MIN_EOCD_SIZE
-        /* maximum length of zipfile comment */ + 0xFFFF;
+        /* maximum length of zipfile comment */ + ZIP64_MAGIC_SHORT;
 
+    /**
+     * Offset of the field that holds the location of the first
+     * central directory entry inside the "End of central directory
+     * record" relative to the start of the "End of central directory
+     * record".
+     */
     private static final int CFD_LOCATOR_OFFSET =
         /* end of central dir signature    */ WORD
         /* number of this disk             */ + SHORT
@@ -508,20 +716,154 @@ public class ZipFile {
         /* size of the central directory   */ + WORD;
 
     /**
-     * Searches for the &quot;End of central dir record&quot;, parses
+     * Length of the "Zip64 end of central directory locator" - which
+     * should be right in front of the "end of central directory
+     * record" if one is present at all.
+     */
+    private static final int ZIP64_EOCDL_LENGTH =
+        /* zip64 end of central dir locator sig */ WORD
+        /* number of the disk with the start    */
+        /* start of the zip64 end of            */
+        /* central directory                    */ + WORD
+        /* relative offset of the zip64         */
+        /* end of central directory record      */ + DWORD
+        /* total number of disks                */ + WORD;
+
+    /**
+     * Offset of the field that holds the location of the "Zip64 end
+     * of central directory record" inside the "Zip64 end of central
+     * directory locator" relative to the start of the "Zip64 end of
+     * central directory locator".
+     */
+    private static final int ZIP64_EOCDL_LOCATOR_OFFSET =
+        /* zip64 end of central dir locator sig */ WORD
+        /* number of the disk with the start    */
+        /* start of the zip64 end of            */
+        /* central directory                    */ + WORD;
+
+    /**
+     * Offset of the field that holds the location of the first
+     * central directory entry inside the "Zip64 end of central
+     * directory record" relative to the start of the "Zip64 end of
+     * central directory record".
+     */
+    private static final int ZIP64_EOCD_CFD_LOCATOR_OFFSET =
+        /* zip64 end of central dir        */
+        /* signature                       */ WORD
+        /* size of zip64 end of central    */
+        /* directory record                */ + DWORD
+        /* version made by                 */ + SHORT
+        /* version needed to extract       */ + SHORT
+        /* number of this disk             */ + WORD
+        /* number of the disk with the     */
+        /* start of the central directory  */ + WORD
+        /* total number of entries in the  */
+        /* central directory on this disk  */ + DWORD
+        /* total number of entries in the  */
+        /* central directory               */ + DWORD
+        /* size of the central directory   */ + DWORD;
+
+    /**
+     * Searches for either the &quot;Zip64 end of central directory
+     * locator&quot; or the &quot;End of central dir record&quot;, parses
      * it and positions the stream at the first central directory
      * record.
      */
     private void positionAtCentralDirectory()
         throws IOException {
+        positionAtEndOfCentralDirectoryRecord();
         boolean found = false;
-        long off = archive.length() - MIN_EOCD_SIZE;
-        long stopSearching = Math.max(0L, archive.length() - MAX_EOCD_SIZE);
+        boolean searchedForZip64EOCD =
+            archive.getFilePointer() > ZIP64_EOCDL_LENGTH;
+        if (searchedForZip64EOCD) {
+            archive.seek(archive.getFilePointer() - ZIP64_EOCDL_LENGTH);
+            archive.readFully(WORD_BUF);
+            found = Arrays.equals(ZipArchiveOutputStream.ZIP64_EOCD_LOC_SIG,
+                                  WORD_BUF);
+        }
+        if (!found) {
+            // not a ZIP64 archive
+            if (searchedForZip64EOCD) {
+                skipBytes(ZIP64_EOCDL_LENGTH - WORD);
+            }
+            positionAtCentralDirectory32();
+        } else {
+            positionAtCentralDirectory64();
+        }
+    }
+
+    /**
+     * Parses the &quot;Zip64 end of central directory locator&quot;,
+     * finds the &quot;Zip64 end of central directory record&quot; using the
+     * parsed information, parses that and positions the stream at the
+     * first central directory record.
+     *
+     * Expects stream to be positioned right behind the &quot;Zip64
+     * end of central directory locator&quot;'s signature.
+     */
+    private void positionAtCentralDirectory64()
+        throws IOException {
+        skipBytes(ZIP64_EOCDL_LOCATOR_OFFSET
+                  - WORD /* signature has already been read */);
+        archive.readFully(DWORD_BUF);
+        archive.seek(ZipEightByteInteger.getLongValue(DWORD_BUF));
+        archive.readFully(WORD_BUF);
+        if (!Arrays.equals(WORD_BUF, ZipArchiveOutputStream.ZIP64_EOCD_SIG)) {
+            throw new ZipException("archive's ZIP64 end of central "
+                                   + "directory locator is corrupt.");
+        }
+        skipBytes(ZIP64_EOCD_CFD_LOCATOR_OFFSET
+                  - WORD /* signature has already been read */);
+        archive.readFully(DWORD_BUF);
+        archive.seek(ZipEightByteInteger.getLongValue(DWORD_BUF));
+    }
+
+    /**
+     * Parses the &quot;End of central dir record&quot; and positions
+     * the stream at the first central directory record.
+     *
+     * Expects stream to be positioned at the beginning of the
+     * &quot;End of central dir record&quot;.
+     */
+    private void positionAtCentralDirectory32()
+        throws IOException {
+        skipBytes(CFD_LOCATOR_OFFSET);
+        archive.readFully(WORD_BUF);
+        archive.seek(ZipLong.getValue(WORD_BUF));
+    }
+
+    /**
+     * Searches for the and positions the stream at the start of the
+     * &quot;End of central dir record&quot;.
+     */
+    private void positionAtEndOfCentralDirectoryRecord()
+        throws IOException {
+        boolean found = tryToLocateSignature(MIN_EOCD_SIZE, MAX_EOCD_SIZE,
+                                             ZipArchiveOutputStream.EOCD_SIG);
+        if (!found) {
+            throw new ZipException("archive is not a ZIP archive");
+        }
+    }
+
+    /**
+     * Searches the archive backwards from minDistance to maxDistance
+     * for the given signature, positions the RandomaccessFile right
+     * at the signature if it has been found.
+     */
+    private boolean tryToLocateSignature(long minDistanceFromEnd,
+                                         long maxDistanceFromEnd,
+                                         byte[] sig) throws IOException {
+        boolean found = false;
+        long off = archive.length() - minDistanceFromEnd;
+        final long stopSearching =
+            Math.max(0L, archive.length() - maxDistanceFromEnd);
         if (off >= 0) {
-            archive.seek(off);
-            byte[] sig = ZipArchiveOutputStream.EOCD_SIG;
-            int curr = archive.read();
-            while (off >= stopSearching && curr != -1) {
+            for (; off >= stopSearching; off--) {
+                archive.seek(off);
+                int curr = archive.read();
+                if (curr == -1) {
+                    break;
+                }
                 if (curr == sig[POS_0]) {
                     curr = archive.read();
                     if (curr == sig[POS_1]) {
@@ -535,17 +877,27 @@ public class ZipFile {
                         }
                     }
                 }
-                archive.seek(--off);
-                curr = archive.read();
             }
         }
-        if (!found) {
-            throw new ZipException("archive is not a ZIP archive");
+        if (found) {
+            archive.seek(off);
         }
-        archive.seek(off + CFD_LOCATOR_OFFSET);
-        byte[] cfdOffset = new byte[WORD];
-        archive.readFully(cfdOffset);
-        archive.seek(ZipLong.getValue(cfdOffset));
+        return found;
+    }
+
+    /**
+     * Skips the given number of bytes or throws an EOFException if
+     * skipping failed.
+     */ 
+    private void skipBytes(final int count) throws IOException {
+        int totalSkipped = 0;
+        while (totalSkipped < count) {
+            int skippedNow = archive.skipBytes(count - totalSkipped);
+            if (skippedNow <= 0) {
+                throw new EOFException();
+            }
+            totalSkipped += skippedNow;
+        }
     }
 
     /**
@@ -570,48 +922,48 @@ public class ZipFile {
      * <p>Also records the offsets for the data to read from the
      * entries.</p>
      */
-    private void resolveLocalFileHeaderData(Map entriesWithoutUTF8Flag)
+    private void resolveLocalFileHeaderData(Map<ZipArchiveEntry, NameAndComment>
+                                            entriesWithoutUTF8Flag)
         throws IOException {
-        Enumeration e = getEntries();
-        while (e.hasMoreElements()) {
-            ZipArchiveEntry ze = (ZipArchiveEntry) e.nextElement();
-            OffsetEntry offsetEntry = (OffsetEntry) entries.get(ze);
+        for (ZipArchiveEntry zipArchiveEntry : entries) {
+            // entries is filled in populateFromCentralDirectory and
+            // never modified
+            Entry ze = (Entry) zipArchiveEntry;
+            OffsetEntry offsetEntry = ze.getOffsetEntry();
             long offset = offsetEntry.headerOffset;
             archive.seek(offset + LFH_OFFSET_FOR_FILENAME_LENGTH);
-            byte[] b = new byte[SHORT];
-            archive.readFully(b);
-            int fileNameLen = ZipShort.getValue(b);
-            archive.readFully(b);
-            int extraFieldLen = ZipShort.getValue(b);
+            archive.readFully(SHORT_BUF);
+            int fileNameLen = ZipShort.getValue(SHORT_BUF);
+            archive.readFully(SHORT_BUF);
+            int extraFieldLen = ZipShort.getValue(SHORT_BUF);
             int lenToSkip = fileNameLen;
             while (lenToSkip > 0) {
                 int skipped = archive.skipBytes(lenToSkip);
                 if (skipped <= 0) {
-                    throw new RuntimeException("failed to skip file name in"
-                                               + " local file header");
+                    throw new IOException("failed to skip file name in"
+                                          + " local file header");
                 }
                 lenToSkip -= skipped;
             }
             byte[] localExtraData = new byte[extraFieldLen];
             archive.readFully(localExtraData);
             ze.setExtra(localExtraData);
-            /*dataOffsets.put(ze,
-                            new Long(offset + LFH_OFFSET_FOR_FILENAME_LENGTH
-                                     + SHORT + SHORT + fileNameLen + extraFieldLen));
-            */
             offsetEntry.dataOffset = offset + LFH_OFFSET_FOR_FILENAME_LENGTH
                 + SHORT + SHORT + fileNameLen + extraFieldLen;
 
             if (entriesWithoutUTF8Flag.containsKey(ze)) {
-                String orig = ze.getName();
-                NameAndComment nc = (NameAndComment) entriesWithoutUTF8Flag.get(ze);
+                NameAndComment nc = entriesWithoutUTF8Flag.get(ze);
                 ZipUtil.setNameAndCommentFromExtraFields(ze, nc.name,
                                                          nc.comment);
-                if (!orig.equals(ze.getName())) {
-                    nameMap.remove(orig);
-                    nameMap.put(ze.getName(), ze);
-                }
             }
+
+            String name = ze.getName();
+            LinkedList<ZipArchiveEntry> entriesOfThatName = nameMap.get(name);
+            if (entriesOfThatName == null) {
+                entriesOfThatName = new LinkedList<ZipArchiveEntry>();
+                nameMap.put(name, entriesOfThatName);
+            }
+            entriesOfThatName.addLast(ze);
         }
     }
 
@@ -621,14 +973,8 @@ public class ZipFile {
      */
     private boolean startsWithLocalFileHeader() throws IOException {
         archive.seek(0);
-        final byte[] start = new byte[WORD];
-        archive.readFully(start);
-        for (int i = 0; i < start.length; i++) {
-            if (start[i] != ZipArchiveOutputStream.LFH_SIG[i]) {
-                return false;
-            }
-        }
-        return true;
+        archive.readFully(WORD_BUF);
+        return Arrays.equals(WORD_BUF, ZipArchiveOutputStream.LFH_SIG);
     }
 
     /**
@@ -646,6 +992,7 @@ public class ZipFile {
             loc = start;
         }
 
+        @Override
         public int read() throws IOException {
             if (remaining-- <= 0) {
                 if (addDummyByte) {
@@ -660,6 +1007,7 @@ public class ZipFile {
             }
         }
 
+        @Override
         public int read(byte[] b, int off, int len) throws IOException {
             if (remaining <= 0) {
                 if (addDummyByte) {
@@ -713,27 +1061,61 @@ public class ZipFile {
      * <p>Won't return any meaningful results if one of the entries
      * isn't part of the archive at all.</p>
      *
-     * @since Commons Compress 1.1
+     * @since 1.1
      */
-    private final Comparator OFFSET_COMPARATOR =
-        new Comparator() {
-            public int compare(Object o1, Object o2) {
-                if (o1 == o2)
-                    return 0;
-
-                ZipArchiveEntry e1 = (ZipArchiveEntry) o1;
-                ZipArchiveEntry e2 = (ZipArchiveEntry) o2;
-
-                OffsetEntry off1 = (OffsetEntry) entries.get(e1);
-                OffsetEntry off2 = (OffsetEntry) entries.get(e2);
-                if (off1 == null) {
-                    return 1;
-                }
-                if (off2 == null) {
-                    return -1;
-                }
-                long val = (off1.headerOffset - off2.headerOffset);
-                return val == 0 ? 0 : val < 0 ? -1 : +1;
+    private final Comparator<ZipArchiveEntry> OFFSET_COMPARATOR =
+        new Comparator<ZipArchiveEntry>() {
+        public int compare(ZipArchiveEntry e1, ZipArchiveEntry e2) {
+            if (e1 == e2) {
+                return 0;
             }
-        };
+
+            Entry ent1 = e1 instanceof Entry ? (Entry) e1 : null;
+            Entry ent2 = e2 instanceof Entry ? (Entry) e2 : null;
+            if (ent1 == null) {
+                return 1;
+            }
+            if (ent2 == null) {
+                return -1;
+            }
+            long val = (ent1.getOffsetEntry().headerOffset
+                        - ent2.getOffsetEntry().headerOffset);
+            return val == 0 ? 0 : val < 0 ? -1 : +1;
+        }
+    };
+
+    /**
+     * Extends ZipArchiveEntry to store the offset within the archive.
+     */
+    private static class Entry extends ZipArchiveEntry {
+
+        private final OffsetEntry offsetEntry;
+
+        Entry(OffsetEntry offset) {
+            this.offsetEntry = offset;
+        }
+
+        OffsetEntry getOffsetEntry() {
+            return offsetEntry;
+        }
+
+        @Override
+        public int hashCode() {
+            return 3 * super.hashCode()
+                + (int) (offsetEntry.headerOffset % Integer.MAX_VALUE);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (super.equals(other)) {
+                // super.equals would return false if other were not an Entry
+                Entry otherEntry = (Entry) other;
+                return offsetEntry.headerOffset
+                        == otherEntry.offsetEntry.headerOffset
+                    && offsetEntry.dataOffset
+                        == otherEntry.offsetEntry.dataOffset;
+            }
+            return false;
+        }
+    }
 }

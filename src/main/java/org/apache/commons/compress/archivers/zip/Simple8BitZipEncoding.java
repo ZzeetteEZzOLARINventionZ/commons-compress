@@ -50,7 +50,7 @@ class Simple8BitZipEncoding implements ZipEncoding {
      * A character entity, which is put to the reverse mapping table
      * of a simple encoding.
      */
-    private static final class Simple8BitChar implements Comparable {
+    private static final class Simple8BitChar implements Comparable<Simple8BitChar> {
         public final char unicode;
         public final byte code;
 
@@ -59,15 +59,28 @@ class Simple8BitZipEncoding implements ZipEncoding {
             this.unicode = unicode;
         }
 
-        public int compareTo(Object o) {
-            Simple8BitChar a = (Simple8BitChar) o;
-
+        public int compareTo(Simple8BitChar a) {
             return this.unicode - a.unicode;
         }
 
+        @Override
         public String toString() {
             return "0x" + Integer.toHexString(0xffff & unicode)
                 + "->0x" + Integer.toHexString(0xff & code);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (o instanceof Simple8BitChar) {
+                Simple8BitChar other = (Simple8BitChar) o;
+                return unicode == other.unicode && code == other.code;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return unicode;
         }
     }
 
@@ -89,13 +102,14 @@ class Simple8BitZipEncoding implements ZipEncoding {
      * stored as an array of 128 chars.
      */
     public Simple8BitZipEncoding(char[] highChars) {
-        this.highChars = (char[]) highChars.clone();
-        List temp = new ArrayList<Simple8BitChar>(this.highChars.length);
+        this.highChars = highChars.clone();
+        List<Simple8BitChar> temp =
+            new ArrayList<Simple8BitChar>(this.highChars.length);
 
         byte code = 127;
 
-        for (int i = 0; i < this.highChars.length; ++i) {
-            temp.add(new Simple8BitChar(++code, this.highChars[i]));
+        for (char highChar : this.highChars) {
+            temp.add(new Simple8BitChar(++code, highChar));
         }
 
         Collections.sort(temp);
@@ -138,7 +152,7 @@ class Simple8BitZipEncoding implements ZipEncoding {
      * @param bb The byte buffer to write to.
      * @param c The character to encode.
      * @return Whether the given unicode character is covered by this encoding.
-     *         If <code>false</code> is returned, nothing is pushed to the
+     *         If {@code false} is returned, nothing is pushed to the
      *         byte buffer. 
      */
     public boolean pushEncodedChar(ByteBuffer bb, char c) {
@@ -159,7 +173,7 @@ class Simple8BitZipEncoding implements ZipEncoding {
     /**
      * @param c A unicode character in the range from 0x0080 to 0x7f00
      * @return A Simple8BitChar, if this character is covered by this encoding.
-     *         A <code>null</code> value is returned, if this character is not
+     *         A {@code null} value is returned, if this character is not
      *         covered by this encoding.
      */
     private Simple8BitChar encodeHighChar(char c) {

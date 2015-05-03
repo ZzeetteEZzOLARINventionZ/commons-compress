@@ -24,12 +24,14 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+import org.apache.commons.compress.AbstractTestCase;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.utils.IOUtils;
-
-import org.apache.commons.compress.AbstractTestCase;
+import org.junit.Test;
 
 public final class JarTestCase extends AbstractTestCase {
+
+    @Test
     public void testJarArchiveCreation() throws Exception {
         final File output = new File(dir, "bla.jar");
 
@@ -52,6 +54,7 @@ public final class JarTestCase extends AbstractTestCase {
     }
 
 
+    @Test
     public void testJarUnarchive() throws Exception {
         final File input = getFile("bla.jar");
         final InputStream is = new FileInputStream(input);
@@ -82,6 +85,7 @@ public final class JarTestCase extends AbstractTestCase {
         is.close();
     }
 
+    @Test
     public void testJarUnarchiveAll() throws Exception {
         final File input = getFile("bla.jar");
         final InputStream is = new FileInputStream(input);

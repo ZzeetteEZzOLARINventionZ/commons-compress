@@ -17,6 +17,7 @@
  */
 package org.apache.commons.compress.archivers.zip;
 
+import java.io.Serializable;
 import java.math.BigInteger;
 
 import static org.apache.commons.compress.archivers.zip.ZipConstants.BYTE_MASK;
@@ -26,9 +27,10 @@ import static org.apache.commons.compress.archivers.zip.ZipConstants.BYTE_MASK;
  * rules for the big endian byte order of ZIP files.
  * @Immutable
  *
- * @since Apache Commons Compress 1.2
+ * @since 1.2
  */
-public final class ZipEightByteInteger {
+public final class ZipEightByteInteger implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private static final int BYTE_1 = 1;
     private static final int BYTE_1_MASK = 0xFF00;
@@ -63,7 +65,7 @@ public final class ZipEightByteInteger {
 
     private final BigInteger value;
 
-    public static ZipEightByteInteger ZERO = new ZipEightByteInteger(0);
+    public static final ZipEightByteInteger ZERO = new ZipEightByteInteger(0);
 
     /**
      * Create instance from a number.

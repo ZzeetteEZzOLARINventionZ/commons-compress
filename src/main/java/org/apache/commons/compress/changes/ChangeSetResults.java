@@ -25,10 +25,10 @@ import java.util.List;
  * Stores the results of an performed ChangeSet operation.
  */
 public class ChangeSetResults {
-    private final List addedFromChangeSet = new ArrayList();
-    private final List addedFromStream = new ArrayList();
-    private final List deleted = new ArrayList();
-    
+    private final List<String> addedFromChangeSet = new ArrayList<String>();
+    private final List<String> addedFromStream = new ArrayList<String>();
+    private final List<String> deleted = new ArrayList<String>();
+
     /**
      * Adds the filename of a recently deleted file to the result list.
      * @param fileName the file which has been deleted
@@ -36,7 +36,7 @@ public class ChangeSetResults {
     void deleted(String fileName) {
         deleted.add(fileName);
     }
-    
+
     /**
      * Adds the name of a file to the result list which has been 
      * copied from the source stream to the target stream.
@@ -45,7 +45,7 @@ public class ChangeSetResults {
     void addedFromStream(String fileName) {
         addedFromStream.add(fileName);
     }
-    
+
     /**
      * Adds the name of a file to the result list which has been
      * copied from the changeset to the target stream
@@ -59,7 +59,7 @@ public class ChangeSetResults {
      * Returns a list of filenames which has been added from the changeset
      * @return the list of filenames
      */
-    public List getAddedFromChangeSet() {
+    public List<String> getAddedFromChangeSet() {
         return addedFromChangeSet;
     }
 
@@ -67,7 +67,7 @@ public class ChangeSetResults {
      * Returns a list of filenames which has been added from the original stream
      * @return the list of filenames
      */
-    public List getAddedFromStream() {
+    public List<String> getAddedFromStream() {
         return addedFromStream;
     }
 
@@ -75,10 +75,10 @@ public class ChangeSetResults {
      * Returns a list of filenames which has been deleted
      * @return the list of filenames
      */
-    public List getDeleted() {
+    public List<String> getDeleted() {
         return deleted;
     }
-    
+
     /**
      * Checks if an filename already has been added to the result list
      * @param filename the filename to check

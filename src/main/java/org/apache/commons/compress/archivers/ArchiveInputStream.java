@@ -39,9 +39,9 @@ import java.io.InputStream;
  */
 public abstract class ArchiveInputStream extends InputStream {
 
-    private byte[] SINGLE = new byte[1];
+    private final byte[] SINGLE = new byte[1];
     private static final int BYTE_MASK = 0xFF;
-    
+
     /** holds the number of bytes read in this stream */
     private long bytesRead = 0;
 
@@ -49,7 +49,7 @@ public abstract class ArchiveInputStream extends InputStream {
      * Returns the next Archive Entry in this Stream.
      *
      * @return the next entry,
-     *         or <code>null</code> if there are no more entries
+     *         or {@code null} if there are no more entries
      * @throws IOException if the next entry could not be read
      */
     public abstract ArchiveEntry getNextEntry() throws IOException;
@@ -76,11 +76,12 @@ public abstract class ArchiveInputStream extends InputStream {
      * @throws IOException
      *             if an I/O error has occurred
      */
+    @Override
     public int read() throws IOException {
         int num = read(SINGLE, 0, 1);
         return num == -1 ? -1 : SINGLE[0] & BYTE_MASK;
     }
-    
+
     /**
      * Increments the counter of already read bytes.
      * Doesn't increment if the EOF has been hit (read == -1)
@@ -96,30 +97,31 @@ public abstract class ArchiveInputStream extends InputStream {
      * Doesn't increment if the EOF has been hit (read == -1)
      * 
      * @param read the number of bytes read
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     protected void count(long read) {
         if (read != -1) {
             bytesRead = bytesRead + read;
         }
     }
-    
+
     /**
      * Decrements the counter of already read bytes.
      * 
      * @param pushedBack the number of bytes pushed back.
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     protected void pushedBackBytes(long pushedBack) {
         bytesRead -= pushedBack;
     }
-    
+
     /**
      * Returns the current number of bytes read from this stream.
      * @return the number of read bytes
      * @deprecated this method may yield wrong results for large
      * archives, use #getBytesRead instead
      */
+    @Deprecated
     public int getCount() {
         return (int) bytesRead;
     }
@@ -127,7 +129,7 @@ public abstract class ArchiveInputStream extends InputStream {
     /**
      * Returns the current number of bytes read from this stream.
      * @return the number of read bytes
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     public long getBytesRead() {
         return bytesRead;
@@ -135,15 +137,18 @@ public abstract class ArchiveInputStream extends InputStream {
 
     /**
      * Whether this stream is able to read the given entry.
-     *
-     * <p>Some archive formats support variants or details that are
-     * not supported (yet).</p>
-     *
-     * <p>This implementation always returns true.
-     *
-     * @since Apache Commons Compress 1.1
+     * 
+     * <p>
+     * Some archive formats support variants or details that are not supported (yet).
+     * </p>
+     * 
+     * @param archiveEntry
+     *            the entry to test
+     * @return This implementation always returns true.
+     * 
+     * @since 1.1
      */
-    public boolean canReadEntryData(ArchiveEntry ae) {
+    public boolean canReadEntryData(ArchiveEntry archiveEntry) {
         return true;
     }
 

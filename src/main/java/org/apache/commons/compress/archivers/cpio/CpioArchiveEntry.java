@@ -30,7 +30,7 @@ import org.apache.commons.compress.archivers.ArchiveEntry;
  * 
  * <ul>
  * <li>"070701" ASCII for new portable format</li>
- * <li>"070702" ASCII for new portable format with CRC format</li>
+ * <li>"070702" ASCII for new portable format with CRC</li>
  * <li>"070707" ASCII for old ascii (also known as Portable ASCII, odc or old
  * character format</li>
  * <li>070707 binary for old binary</li>
@@ -141,7 +141,7 @@ import org.apache.commons.compress.archivers.ArchiveEntry;
  * N.B. does not handle the cpio "tar" format
  * </p>
  * @NotThreadSafe
- * @see "http://people.freebsd.org/~kientzle/libarchive/man/cpio.5.txt"
+ * @see <a href="http://people.freebsd.org/~kientzle/libarchive/man/cpio.5.txt">http://people.freebsd.org/~kientzle/libarchive/man/cpio.5.txt</a>
  */
 public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
 
@@ -192,14 +192,14 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * 
      * @param format
      *            The cpio format for this entry.
-     * <br/>
-     * Possible format values are:
      * <p>
-     * CpioConstants.FORMAT_NEW<br/>
-     * CpioConstants.FORMAT_NEW_CRC<br/>
-     * CpioConstants.FORMAT_OLD_BINARY<br/>
-     * CpioConstants.FORMAT_OLD_ASCII<br/>
-     * 
+     * Possible format values are:
+     * <pre>
+     * CpioConstants.FORMAT_NEW
+     * CpioConstants.FORMAT_NEW_CRC
+     * CpioConstants.FORMAT_OLD_BINARY
+     * CpioConstants.FORMAT_OLD_ASCII
+     * </pre>
      */
     public CpioArchiveEntry(final short format) {
         switch (format) {
@@ -243,15 +243,16 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      *            The cpio format for this entry.
      * @param name
      *            The name of this entry.
-     * <br/>
-     * Possible format values are:
      * <p>
-     * CpioConstants.FORMAT_NEW<br/>
-     * CpioConstants.FORMAT_NEW_CRC<br/>
-     * CpioConstants.FORMAT_OLD_BINARY<br/>
-     * CpioConstants.FORMAT_OLD_ASCII<br/>
+     * Possible format values are:
+     * <pre>
+     * CpioConstants.FORMAT_NEW
+     * CpioConstants.FORMAT_NEW_CRC
+     * CpioConstants.FORMAT_OLD_BINARY
+     * CpioConstants.FORMAT_OLD_ASCII
+     * </pre>
      * 
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     public CpioArchiveEntry(final short format, final String name) {
         this(format);
@@ -281,15 +282,16 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      *            The name of this entry.
      * @param size
      *            The size of this entry
-     * <br/>
-     * Possible format values are:
      * <p>
-     * CpioConstants.FORMAT_NEW<br/>
-     * CpioConstants.FORMAT_NEW_CRC<br/>
-     * CpioConstants.FORMAT_OLD_BINARY<br/>
-     * CpioConstants.FORMAT_OLD_ASCII<br/>
+     * Possible format values are:
+     * <pre>
+     * CpioConstants.FORMAT_NEW
+     * CpioConstants.FORMAT_NEW_CRC
+     * CpioConstants.FORMAT_OLD_BINARY
+     * CpioConstants.FORMAT_OLD_ASCII
+     * </pre>
      * 
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     public CpioArchiveEntry(final short format, final String name,
                             final long size) {
@@ -321,30 +323,29 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      *            The file to gather information from.
      * @param entryName
      *            The name of this entry.
-     * <br/>
-     * Possible format values are:
      * <p>
-     * CpioConstants.FORMAT_NEW<br/>
-     * CpioConstants.FORMAT_NEW_CRC<br/>
-     * CpioConstants.FORMAT_OLD_BINARY<br/>
-     * CpioConstants.FORMAT_OLD_ASCII<br/>
+     * Possible format values are:
+     * <pre>
+     * CpioConstants.FORMAT_NEW
+     * CpioConstants.FORMAT_NEW_CRC
+     * CpioConstants.FORMAT_OLD_BINARY
+     * CpioConstants.FORMAT_OLD_ASCII
+     * </pre>
      * 
-     * @since Apache Commons Compress 1.1
+     * @since 1.1
      */
     public CpioArchiveEntry(final short format, File inputFile,
                             String entryName) {
         this(format, entryName, inputFile.isFile() ? inputFile.length() : 0);
-        long mode=0;
         if (inputFile.isDirectory()){
-            mode |= C_ISDIR;
+            setMode(C_ISDIR);
         } else if (inputFile.isFile()){
-            mode |= C_ISREG;
+            setMode(C_ISREG);
         } else {
             throw new IllegalArgumentException("Cannot determine type of file "
                                                + inputFile.getName());
         }
         // TODO set other fields as needed
-        setMode(mode);
         setTime(inputFile.lastModified() / 1000);
     }
 
@@ -467,8 +468,11 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return the number of bytes needed to pad the header (0,1,2,3)
      */
     public int getHeaderPadCount(){
-        if (this.alignmentBoundary == 0) return 0;
-        int size = this.headerSize+this.name.length()+1; // Name has terminating null
+        if (this.alignmentBoundary == 0) { return 0; }
+        int size = this.headerSize + 1;  // Name has terminating null
+        if (name != null) {
+            size += name.length();
+        }
         int remain = size % this.alignmentBoundary;
         if (remain > 0){
             return this.alignmentBoundary - remain;
@@ -482,7 +486,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return the number of bytes needed to pad the data (0,1,2,3)
      */
     public int getDataPadCount(){
-        if (this.alignmentBoundary == 0) return 0;
+        if (this.alignmentBoundary == 0) { return 0; }
         long size = this.filesize;
         int remain = (int) (size % this.alignmentBoundary);
         if (remain > 0){
@@ -525,7 +529,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      */
     public long getNumberOfLinks() {
         return nlink == 0 ?
-            (isDirectory() ? 2 : 1)
+            isDirectory() ? 2 : 1
             : nlink;
     }
 
@@ -577,7 +581,6 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
         return this.mtime;
     }
 
-    /** {@inheritDoc} */
     public Date getLastModifiedDate() {
         return new Date(1000 * getTime());
     }
@@ -597,7 +600,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a block device.
      */
     public boolean isBlockDevice() {
-        return (this.mode & S_IFMT) == C_ISBLK;
+        return CpioUtil.fileType(mode) == C_ISBLK;
     }
 
     /**
@@ -606,7 +609,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a character device.
      */
     public boolean isCharacterDevice() {
-        return (this.mode & S_IFMT) == C_ISCHR;
+        return CpioUtil.fileType(mode) == C_ISCHR;
     }
 
     /**
@@ -615,7 +618,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a directory.
      */
     public boolean isDirectory() {
-        return (this.mode & S_IFMT) == C_ISDIR;
+        return CpioUtil.fileType(mode) == C_ISDIR;
     }
 
     /**
@@ -624,7 +627,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a network device.
      */
     public boolean isNetwork() {
-        return (this.mode & S_IFMT) == C_ISNWK;
+        return CpioUtil.fileType(mode) == C_ISNWK;
     }
 
     /**
@@ -633,7 +636,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a pipe.
      */
     public boolean isPipe() {
-        return (this.mode & S_IFMT) == C_ISFIFO;
+        return CpioUtil.fileType(mode) == C_ISFIFO;
     }
 
     /**
@@ -642,7 +645,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a regular file.
      */
     public boolean isRegularFile() {
-        return (this.mode & S_IFMT) == C_ISREG;
+        return CpioUtil.fileType(mode) == C_ISREG;
     }
 
     /**
@@ -651,7 +654,7 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a socket.
      */
     public boolean isSocket() {
-        return (this.mode & S_IFMT) == C_ISSOCK;
+        return CpioUtil.fileType(mode) == C_ISSOCK;
     }
 
     /**
@@ -660,12 +663,12 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
      * @return TRUE if this entry is a symbolic link.
      */
     public boolean isSymbolicLink() {
-        return (this.mode & S_IFMT) == C_ISLNK;
+        return CpioUtil.fileType(mode) == C_ISLNK;
     }
 
     /**
      * Set the checksum. The checksum is calculated by adding all bytes of a
-     * file to transfer (crc += buf[pos] & 0xFF).
+     * file to transfer (crc += buf[pos] &amp; 0xFF).
      * 
      * @param chksum
      *            The checksum to set.
@@ -858,16 +861,18 @@ public class CpioArchiveEntry implements CpioConstants, ArchiveEntry {
     /* (non-Javadoc)
      * @see java.lang.Object#hashCode()
      */
+    @Override
     public int hashCode() {
         final int prime = 31;
         int result = 1;
-        result = prime * result + ((name == null) ? 0 : name.hashCode());
+        result = prime * result + (name == null ? 0 : name.hashCode());
         return result;
     }
 
     /* (non-Javadoc)
      * @see java.lang.Object#equals(java.lang.Object)
      */
+    @Override
     public boolean equals(Object obj) {
         if (this == obj) {
             return true;

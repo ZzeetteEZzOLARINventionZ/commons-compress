@@ -23,12 +23,13 @@ import java.util.zip.ZipException;
 /**
  * Exception thrown when attempting to read or write data for a zip
  * entry that uses ZIP features not supported by this library.
- * @since Commons Compress 1.1
+ * @since 1.1
  */
 public class UnsupportedZipFeatureException extends ZipException {
 
     private final Feature reason;
     private final ZipArchiveEntry entry;
+    private static final long serialVersionUID = 20130101L;
 
     /**
      * Creates an exception.
@@ -41,6 +42,34 @@ public class UnsupportedZipFeatureException extends ZipException {
               + entry.getName());
         this.reason = reason;
         this.entry = entry;
+    }
+
+    /**
+     * Creates an exception for archives that use an unsupported
+     * compression algorithm.
+     * @param method the method that is not supported
+     * @param entry the entry using the feature
+     * @since 1.5
+     */
+    public UnsupportedZipFeatureException(ZipMethod method,
+                                          ZipArchiveEntry entry) {
+        super("unsupported feature method '" + method.name()
+              +  "' used in entry " + entry.getName());
+        this.reason = Feature.METHOD;
+        this.entry = entry;
+    }
+
+    /**
+     * Creates an exception when the whole archive uses an unsupported
+     * feature.
+     *
+     * @param reason the feature that is not supported
+     * @since 1.5
+     */
+    public UnsupportedZipFeatureException(Feature reason) {
+        super("unsupported feature " + reason +  " used in archive.");
+        this.reason = reason;
+        this.entry = null;
     }
 
     /**
@@ -59,7 +88,7 @@ public class UnsupportedZipFeatureException extends ZipException {
 
     /**
      * ZIP Features that may or may not be supported.
-     * @since Commons Compress 1.1
+     * @since 1.1
      */
     public static class Feature {
         /**
@@ -74,13 +103,19 @@ public class UnsupportedZipFeatureException extends ZipException {
          * The entry uses a data descriptor.
          */
         public static final Feature DATA_DESCRIPTOR = new Feature("data descriptor");
-        
+        /**
+         * The archive uses splitting or spanning.
+         * @since 1.5
+         */
+        public static final Feature SPLITTING = new Feature("splitting");
+
         private final String name;
 
         private Feature(String name) {
             this.name = name;
         }
 
+        @Override
         public String toString() {
             return name;
         }

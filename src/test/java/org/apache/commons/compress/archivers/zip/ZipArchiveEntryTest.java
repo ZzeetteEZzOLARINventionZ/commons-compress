@@ -18,21 +18,23 @@
 
 package org.apache.commons.compress.archivers.zip;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.*;
+
+import java.io.ByteArrayOutputStream;
+import java.util.zip.ZipEntry;
+
+import org.junit.Test;
 
 /**
- * JUnit 3 testcases for org.apache.commons.compress.archivers.zip.ZipEntry.
+ * JUnit testcases for org.apache.commons.compress.archivers.zip.ZipEntry.
  *
  */
-public class ZipArchiveEntryTest extends TestCase {
-
-    public ZipArchiveEntryTest(String name) {
-        super(name);
-    }
+public class ZipArchiveEntryTest {
 
     /**
      * test handling of extra fields
      */
+    @Test
     public void testExtraFields() {
         AsiExtraField a = new AsiExtraField();
         a.setDirectory(true);
@@ -86,6 +88,7 @@ public class ZipArchiveEntryTest extends TestCase {
     /**
      * test handling of extra fields via central directory
      */
+    @Test
     public void testExtraFieldMerging() {
         AsiExtraField a = new AsiExtraField();
         a.setDirectory(true);
@@ -132,6 +135,7 @@ public class ZipArchiveEntryTest extends TestCase {
     /**
      * test handling of extra fields
      */
+    @Test
     public void testAddAsFirstExtraField() {
         AsiExtraField a = new AsiExtraField();
         a.setDirectory(true);
@@ -167,6 +171,7 @@ public class ZipArchiveEntryTest extends TestCase {
         assertSame(a, result[2]);
     }
 
+    @Test
     public void testUnixMode() {
         ZipArchiveEntry ze = new ZipArchiveEntry("foo");
         assertEquals(0, ze.getPlatform());
@@ -202,25 +207,27 @@ public class ZipArchiveEntryTest extends TestCase {
      * <a href="https://issues.apache.org/jira/browse/COMPRESS-93"
      * >COMPRESS-93</a>.
      */
-    public void testCompressionMethod() {
+    @Test
+    public void testCompressionMethod() throws Exception {
         ZipArchiveOutputStream zos =
-            new ZipArchiveOutputStream((java.io.OutputStream) null);
+            new ZipArchiveOutputStream(new ByteArrayOutputStream());
         ZipArchiveEntry entry = new ZipArchiveEntry("foo");
         assertEquals(-1, entry.getMethod());
         assertFalse(zos.canWriteEntryData(entry));
 
-        entry.setMethod(ZipArchiveEntry.STORED);
-        assertEquals(ZipArchiveEntry.STORED, entry.getMethod());
+        entry.setMethod(ZipEntry.STORED);
+        assertEquals(ZipEntry.STORED, entry.getMethod());
         assertTrue(zos.canWriteEntryData(entry));
 
-        entry.setMethod(ZipArchiveEntry.DEFLATED);
-        assertEquals(ZipArchiveEntry.DEFLATED, entry.getMethod());
+        entry.setMethod(ZipEntry.DEFLATED);
+        assertEquals(ZipEntry.DEFLATED, entry.getMethod());
         assertTrue(zos.canWriteEntryData(entry));
 
         // Test the unsupported "imploded" compression method (6)
         entry.setMethod(6);
         assertEquals(6, entry.getMethod());
         assertFalse(zos.canWriteEntryData(entry));
+        zos.close();
     }
 
     /**
@@ -228,9 +235,37 @@ public class ZipArchiveEntryTest extends TestCase {
      * <a href="https://issues.apache.org/jira/browse/COMPRESS-94"
      * >COMPRESS-94</a>.
      */
+    @Test
     public void testNotEquals() {
         ZipArchiveEntry entry1 = new ZipArchiveEntry("foo");
         ZipArchiveEntry entry2 = new ZipArchiveEntry("bar");
         assertFalse(entry1.equals(entry2));
+    }
+
+    /**
+     * Tests comment's influence on equals comparisons.
+     * @see "https://issues.apache.org/jira/browse/COMPRESS-187"
+     */
+    @Test
+    public void testNullCommentEqualsEmptyComment() {
+        ZipArchiveEntry entry1 = new ZipArchiveEntry("foo");
+        ZipArchiveEntry entry2 = new ZipArchiveEntry("foo");
+        ZipArchiveEntry entry3 = new ZipArchiveEntry("foo");
+        entry1.setComment(null);
+        entry2.setComment("");
+        entry3.setComment("bar");
+        assertEquals(entry1, entry2);
+        assertFalse(entry1.equals(entry3));
+        assertFalse(entry2.equals(entry3));
+    }
+
+    @Test
+    public void testCopyConstructor() throws Exception {
+        ZipArchiveEntry archiveEntry = new ZipArchiveEntry("fred");
+        archiveEntry.setUnixMode(0664);
+        archiveEntry.setMethod(ZipEntry.DEFLATED);
+        archiveEntry.getGeneralPurposeBit().useStrongEncryption(true);
+        ZipArchiveEntry copy = new ZipArchiveEntry(archiveEntry);
+        assertEquals(archiveEntry, copy);
     }
 }

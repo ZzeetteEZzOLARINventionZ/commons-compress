@@ -24,6 +24,14 @@ package org.apache.commons.compress.archivers.cpio;
  * @Immutable
  */
 class CpioUtil {
+
+    /**
+     * Extracts the file type bits from a mode.
+     */
+    static long fileType(long mode) {
+        return mode & CpioConstants.S_IFMT;
+    }
+
     /**
      * Converts a byte array to a long. Halfwords can be swapped by setting
      * swapHalfWord=true.
@@ -68,7 +76,7 @@ class CpioUtil {
      * 
      * @param number 
      *            the input long number to be converted
-     *            
+     * 
      * @param length
      *            The length of the returned array
      * @param swapHalfWord

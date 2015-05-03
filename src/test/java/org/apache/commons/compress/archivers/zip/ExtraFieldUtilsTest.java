@@ -18,16 +18,16 @@
 
 package org.apache.commons.compress.archivers.zip;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.*;
+
+import org.junit.Before;
+import org.junit.Test;
 
 /**
- * JUnit 3 testcases for org.apache.commons.compress.archivers.zip.ExtraFieldUtils.
+ * JUnit testcases for org.apache.commons.compress.archivers.zip.ExtraFieldUtils.
  *
  */
-public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
-    public ExtraFieldUtilsTest(String name) {
-        super(name);
-    }
+public class ExtraFieldUtilsTest implements UnixStat {
 
     /**
      * Header-ID of a ZipExtraField not supported by Commons Compress.
@@ -42,6 +42,7 @@ public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
     private byte[] data;
     private byte[] aLocal;
 
+    @Before
     public void setUp() {
         a = new AsiExtraField();
         a.setMode(0755);
@@ -69,6 +70,7 @@ public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
     /**
      * test parser.
      */
+    @Test
     public void testParse() throws Exception {
         ZipExtraField[] ze = ExtraFieldUtils.parse(data);
         assertEquals("number of fields", 2, ze.length);
@@ -92,6 +94,7 @@ public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
         }
     }
 
+    @Test
     public void testParseWithRead() throws Exception {
         ZipExtraField[] ze =
             ExtraFieldUtils.parse(data, true,
@@ -122,6 +125,7 @@ public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
         }
     }
 
+    @Test
     public void testParseWithSkip() throws Exception {
         ZipExtraField[] ze =
             ExtraFieldUtils.parse(data, true,
@@ -147,6 +151,7 @@ public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
     /**
      * Test merge methods
      */
+    @Test
     public void testMerge() {
         byte[] local =
             ExtraFieldUtils.mergeLocalFileDataData(new ZipExtraField[] {a, dummy});
@@ -173,6 +178,7 @@ public class ExtraFieldUtilsTest extends TestCase implements UnixStat {
 
     }
 
+    @Test
     public void testMergeWithUnparseableData() throws Exception {
         ZipExtraField d = new UnparseableExtraFieldData();
         byte[] b = UNRECOGNIZED_HEADER.getBytes();

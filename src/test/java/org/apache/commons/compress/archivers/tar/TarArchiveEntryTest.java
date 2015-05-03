@@ -18,17 +18,21 @@
 
 package org.apache.commons.compress.archivers.tar;
 
+import static org.junit.Assert.*;
+import org.junit.Test;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Locale;
-import junit.framework.TestCase;
 
-public class TarArchiveEntryTest extends TestCase {
+import org.apache.commons.compress.AbstractTestCase;
+
+public class TarArchiveEntryTest implements TarConstants {
 
     private static final String OS =
-        System.getProperty("os.name").toLowerCase(Locale.US);
+        System.getProperty("os.name").toLowerCase(Locale.ENGLISH);
     private static final String ROOT =
         OS.startsWith("windows") || OS.startsWith("netware") ? "C:\\" : "/";
 
@@ -37,11 +41,13 @@ public class TarArchiveEntryTest extends TestCase {
      *
      * @see "https://issues.apache.org/jira/browse/SANDBOX-284"
      */
+    @Test
     public void testFileSystemRoot() {
         TarArchiveEntry t = new TarArchiveEntry(new File(ROOT));
         assertEquals("/", t.getName());
     }
 
+    @Test
     public void testTarFileWithFSRoot() throws IOException {
         File f = File.createTempFile("taetest", ".tar");
         f.deleteOnExit();
@@ -77,15 +83,19 @@ public class TarArchiveEntryTest extends TestCase {
             t = tin.getNextTarEntry();
             assertNotNull(t);
             assertEquals("/", t.getName());
+            assertTrue(t.isCheckSumOK());
             t = tin.getNextTarEntry();
             assertNotNull(t);
             assertEquals("foo.txt", t.getName());
+            assertTrue(t.isCheckSumOK());
             t = tin.getNextTarEntry();
             assertNotNull(t);
             assertEquals("bar.txt", t.getName());
+            assertTrue(t.isCheckSumOK());
             t = tin.getNextTarEntry();
             assertNotNull(t);
             assertEquals("baz.txt", t.getName());
+            assertTrue(t.isCheckSumOK());
         } finally {
             if (tin != null) {
                 tin.close();
@@ -93,9 +103,11 @@ public class TarArchiveEntryTest extends TestCase {
             if (tout != null) {
                 tout.close();
             }
+            AbstractTestCase.tryHardToDelete(f);
         }
     }
-    
+
+    @Test
     public void testMaxFileSize(){
         TarArchiveEntry t = new TarArchiveEntry("");
         t.setSize(0);
@@ -106,10 +118,42 @@ public class TarArchiveEntryTest extends TestCase {
         } catch (IllegalArgumentException expected) {
         }
         t.setSize(077777777777L);
-        try {
-            t.setSize(0100000000000L);
-            fail("Should have generated IllegalArgumentException");
-        } catch (IllegalArgumentException expected) {
-        }
+        t.setSize(0100000000000L);
+    }
+
+    @Test
+    public void testLinkFlagConstructor() {
+        TarArchiveEntry t = new TarArchiveEntry("/foo", LF_GNUTYPE_LONGNAME);
+        assertGnuMagic(t);
+        assertEquals("foo", t.getName());
+    }
+
+    @Test
+    public void testLinkFlagConstructorWithFileFlag() {
+        TarArchiveEntry t = new TarArchiveEntry("/foo", LF_NORMAL);
+        assertPosixMagic(t);
+        assertEquals("foo", t.getName());
+    }
+
+    @Test
+    public void testLinkFlagConstructorWithPreserve() {
+        TarArchiveEntry t = new TarArchiveEntry("/foo", LF_GNUTYPE_LONGNAME,
+                                                true);
+        assertGnuMagic(t);
+        assertEquals("/foo", t.getName());
+    }
+
+    private void assertGnuMagic(TarArchiveEntry t) {
+        assertEquals(MAGIC_GNU + VERSION_GNU_SPACE, readMagic(t));
+    }
+
+    private void assertPosixMagic(TarArchiveEntry t) {
+        assertEquals(MAGIC_POSIX + VERSION_POSIX, readMagic(t));
+    }
+
+    private String readMagic(TarArchiveEntry t) {
+        byte[] buf = new byte[512];
+        t.writeEntryHeader(buf);
+        return new String(buf, MAGIC_OFFSET, MAGICLEN + VERSIONLEN);
     }
 }

@@ -18,20 +18,25 @@
  */
 package org.apache.commons.compress.archivers.jar;
 
+import static org.junit.Assert.*;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import junit.framework.TestCase;
 
+import org.junit.Test;
+import org.apache.commons.compress.AbstractTestCase;
 import org.apache.commons.compress.archivers.zip.JarMarker;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipExtraField;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
-public class JarArchiveOutputStreamTest extends TestCase {
+public class JarArchiveOutputStreamTest {
 
+    @Test
     public void testJarMarker() throws IOException {
         File testArchive = File.createTempFile("jar-aostest", ".jar");
+        testArchive.deleteOnExit();
         JarArchiveOutputStream out = null;
         ZipFile zf = null;
         try {
@@ -63,9 +68,7 @@ public class JarArchiveOutputStreamTest extends TestCase {
                 } catch (IOException e) { /* swallow */ }
             }
             ZipFile.closeQuietly(zf);
-            if (testArchive.exists()) {
-                testArchive.delete();
-            }
+            AbstractTestCase.tryHardToDelete(testArchive);
         }
     }
 

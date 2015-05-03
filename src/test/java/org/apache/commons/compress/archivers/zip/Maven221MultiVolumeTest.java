@@ -18,19 +18,18 @@
 
 package org.apache.commons.compress.archivers.zip;
 
+import static org.apache.commons.compress.AbstractTestCase.getFile;
+import static org.junit.Assert.*;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
 
 import org.apache.commons.compress.archivers.ArchiveEntry;
-
-import junit.framework.TestCase;
+import org.junit.Test;
 
 /**
- * JUnit 3 testcase for a multi-volume zip file.
+ * JUnit testcase for a multi-volume zip file.
  *
  * Some tools (like 7-zip) allow users to split a large archives into 'volumes'
  * with a given size to fit them into multiple cds, usb drives, or emails with
@@ -43,7 +42,7 @@ import junit.framework.TestCase;
  * yields an exception.
  *
  */
-public class Maven221MultiVolumeTest extends TestCase {
+public class Maven221MultiVolumeTest {
 
     private static final String [] ENTRIES = new String [] {
         "apache-maven-2.2.1/",
@@ -66,20 +65,19 @@ public class Maven221MultiVolumeTest extends TestCase {
     private static final String LAST_ENTRY_NAME =
         "apache-maven-2.2.1/lib/maven-2.2.1-uber.jar";
 
-    public void testRead7ZipMultiVolumeArchiveForStream() throws IOException,
-            URISyntaxException {
+    @Test
+    public void testRead7ZipMultiVolumeArchiveForStream() throws IOException {
 
-        URL zip = getClass().getResource("/apache-maven-2.2.1.zip.001");
-        FileInputStream archive = new FileInputStream(
-            new File(new URI(zip.toString())));
+        FileInputStream archive =
+            new FileInputStream(getFile("apache-maven-2.2.1.zip.001"));
         ZipArchiveInputStream zi = null;
         try {
             zi = new ZipArchiveInputStream(archive,null,false);
 
             // these are the entries that are supposed to be processed
             // correctly without any problems
-            for (int i = 0; i < ENTRIES.length; i++) {
-                assertEquals(ENTRIES[i], zi.getNextEntry().getName());
+            for (String element : ENTRIES) {
+                assertEquals(element, zi.getNextEntry().getName());
             }
 
             // this is the last entry that is truncated
@@ -114,10 +112,9 @@ public class Maven221MultiVolumeTest extends TestCase {
         }
     }
 
-    public void testRead7ZipMultiVolumeArchiveForFile()
-        throws URISyntaxException {
-        URL zip = getClass().getResource("/apache-maven-2.2.1.zip.001");
-        File file = new File(new URI(zip.toString()));
+    @Test
+    public void testRead7ZipMultiVolumeArchiveForFile() throws IOException {
+        File file = getFile("apache-maven-2.2.1.zip.001");
         try {
             new ZipFile(file);
             fail("Expected ZipFile to fail");

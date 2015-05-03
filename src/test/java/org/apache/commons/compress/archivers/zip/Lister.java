@@ -25,6 +25,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Enumeration;
+
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.utils.IOUtils;
 
@@ -74,9 +75,9 @@ public final class Lister {
         } else {
             ZipFile zf = new ZipFile(f, cl.encoding);
             try {
-                for (Enumeration entries = zf.getEntries();
+                for (Enumeration<ZipArchiveEntry> entries = zf.getEntries();
                      entries.hasMoreElements(); ) {
-                    ZipArchiveEntry ze = (ZipArchiveEntry) entries.nextElement();
+                    ZipArchiveEntry ze = entries.nextElement();
                     list(ze);
                     if (cl.dir != null) {
                         InputStream is = zf.getInputStream(ze);

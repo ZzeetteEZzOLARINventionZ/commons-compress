@@ -17,6 +17,8 @@
  */
 package org.apache.commons.compress.archivers.zip;
 
+import java.io.Serializable;
+
 import static org.apache.commons.compress.archivers.zip.ZipConstants.BYTE_MASK;
 import static org.apache.commons.compress.archivers.zip.ZipConstants.WORD;
 
@@ -25,7 +27,8 @@ import static org.apache.commons.compress.archivers.zip.ZipConstants.WORD;
  * rules for the big endian byte order of ZIP files.
  * @Immutable
  */
-public final class ZipLong implements Cloneable {
+public final class ZipLong implements Cloneable, Serializable {
+    private static final long serialVersionUID = 1L;
 
     //private static final int BYTE_BIT_SIZE = 8;
 
@@ -50,17 +53,38 @@ public final class ZipLong implements Cloneable {
     public static final ZipLong LFH_SIG = new ZipLong(0X04034B50L);
 
     /**
-     * Data Descriptor signature
-     * @since Apache Commons Compress 1.1
+     * Data Descriptor signature.
+     *
+     * <p>Actually, PKWARE uses this as marker for split/spanned
+     * archives and other archivers have started to use it as Data
+     * Descriptor signature (as well).</p>
+     * @since 1.1
      */
     public static final ZipLong DD_SIG = new ZipLong(0X08074B50L);
 
     /**
      * Value stored in size and similar fields if ZIP64 extensions are
      * used.
-     * @since Apache Commons Compress 1.3
+     * @since 1.3
      */
     static final ZipLong ZIP64_MAGIC = new ZipLong(ZipConstants.ZIP64_MAGIC);
+
+    /**
+     * Marks ZIP archives that were supposed to be split or spanned
+     * but only needed a single segment in then end (so are actually
+     * neither split nor spanned).
+     *
+     * <p>This is the "PK00" prefix found in some archives.</p>
+     * @since 1.5
+     */
+    public static final ZipLong SINGLE_SEGMENT_SPLIT_MARKER =
+        new ZipLong(0X30304B50L);
+
+    /**
+     * Archive extra data record signature.
+     * @since 1.5
+     */
+    public static final ZipLong AED_SIG = new ZipLong(0X08064B50L);
 
     /**
      * Create instance from a number.
@@ -110,11 +134,28 @@ public final class ZipLong implements Cloneable {
      */
     public static byte[] getBytes(long value) {
         byte[] result = new byte[WORD];
-        result[0] = (byte) ((value & BYTE_MASK));
-        result[BYTE_1] = (byte) ((value & BYTE_1_MASK) >> BYTE_1_SHIFT);
-        result[BYTE_2] = (byte) ((value & BYTE_2_MASK) >> BYTE_2_SHIFT);
-        result[BYTE_3] = (byte) ((value & BYTE_3_MASK) >> BYTE_3_SHIFT);
+        putLong(value, result, 0);
         return result;
+    }
+
+    /**
+     * put the value as four bytes in big endian byte order.
+     * @param value the Java long to convert to bytes
+     * @param buf the output buffer
+     * @param  offset
+     *         The offset within the output buffer of the first byte to be written.
+     *         must be non-negative and no larger than <tt>buf.length-4</tt>
+     */
+
+    public static void putLong(long value, byte[] buf, int offset) {
+        buf[offset++] = (byte) ((value & BYTE_MASK));
+        buf[offset++] = (byte) ((value & BYTE_1_MASK) >> BYTE_1_SHIFT);
+        buf[offset++] = (byte) ((value & BYTE_2_MASK) >> BYTE_2_SHIFT);
+        buf[offset] = (byte) ((value & BYTE_3_MASK) >> BYTE_3_SHIFT);
+    }
+
+    public void putLong(byte[] buf, int offset) {
+        putLong(value, buf, offset);
     }
 
     /**
